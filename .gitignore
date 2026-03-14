@@ -1,0 +1,25 @@
+# Секреты и ключи
+.env
+
+# Зависимости
+node_modules/
+
+# Базы данных (SQLite) и их временные файлы
+baza
+baza.db-shm
+baza.db-wal
+messenger
+messenger.db-shm
+messenger.db-wal
+*.db
+
+# Пользовательский контент (Медиа)
+uploads/
+videos/
+voice/
+stickerpack/AI Стикеры/
+
+# Системные файлы
+start_server.bat
+hfjf
+.DS_Store

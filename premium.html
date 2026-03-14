@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>BAZA Premium — Подписка</title>
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080910;--sf:#0f1117;--sf2:#161921;--b:#1e222e;--b2:#252a38;
+  --tx:#e2e5f0;--tx2:#7b80a0;--ac:#5c6ef8;--ac2:#7c8bff;--acg:rgba(92,110,248,.18);
+  --tl:#2dd4bf;--gn:#4ade80;--rd:#f87171;
+  --gold:#f59e0b;--gold2:#fbbf24;--goldg:rgba(245,158,11,.18);
+}
+html,body{min-height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--tx);-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:var(--b2);border-radius:4px}
+
+/* ── AURORA ── */
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(ellipse 60% 50% at 15% 10%,rgba(92,110,248,.15) 0%,transparent 60%),
+    radial-gradient(ellipse 50% 60% at 85% 80%,rgba(245,158,11,.12) 0%,transparent 55%),
+    radial-gradient(ellipse 40% 35% at 50% 100%,rgba(45,212,191,.09) 0%,transparent 50%);
+  animation:aurora 16s ease-in-out infinite alternate;
+}
+@keyframes aurora{
+  0%{transform:translate(0,0) scale(1)}
+  33%{transform:translate(-16px,12px) scale(1.02)}
+  66%{transform:translate(12px,-8px) scale(.99)}
+  100%{transform:translate(-8px,16px) scale(1.01)}
+}
+/* Grid overlay */
+body::after{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(92,110,248,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(92,110,248,.03) 1px,transparent 1px);
+  background-size:48px 48px;
+}
+
+.page{position:relative;z-index:1;max-width:900px;margin:0 auto;padding:40px 20px 80px}
+
+/* ── NAV ── */
+.nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:60px}
+.nav-logo{font-family:'Syne',sans-serif;font-weight:900;font-size:22px;letter-spacing:3px;background:linear-gradient(135deg,var(--ac2),var(--tl));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.nav-back{display:flex;align-items:center;gap:7px;color:var(--tx2);font-size:13px;text-decoration:none;padding:8px 14px;border-radius:10px;border:1px solid var(--b2);background:rgba(255,255,255,.03);transition:all .2s}
+.nav-back:hover{color:var(--tx);border-color:var(--b)}
+
+/* ── HERO ── */
+.hero{text-align:center;margin-bottom:64px}
+.hero-crown{font-size:56px;margin-bottom:20px;display:block;filter:drop-shadow(0 0 24px rgba(245,158,11,.4));animation:float 4s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+.hero-title{font-family:'Syne',sans-serif;font-weight:900;font-size:clamp(32px,6vw,52px);line-height:1.1;margin-bottom:16px}
+.hero-title .gold{background:linear-gradient(135deg,var(--gold),var(--gold2),#fff8dc);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.hero-sub{font-size:16px;color:var(--tx2);line-height:1.7;max-width:520px;margin:0 auto}
+
+/* ── FEATURES ── */
+.features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:64px}
+.feature-card{background:rgba(15,17,23,.7);border:1px solid var(--b);border-radius:18px;padding:22px 20px;backdrop-filter:blur(12px);transition:border-color .25s,transform .2s;position:relative;overflow:hidden}
+.feature-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent)}
+.feature-card:hover{border-color:var(--b2);transform:translateY(-2px)}
+.feature-icon{font-size:26px;margin-bottom:12px}
+.feature-title{font-family:'Syne',sans-serif;font-weight:700;font-size:14px;margin-bottom:6px}
+.feature-desc{font-size:12px;color:var(--tx2);line-height:1.6}
+.feature-card.highlight{border-color:rgba(245,158,11,.3);background:linear-gradient(145deg,rgba(245,158,11,.06),rgba(15,17,23,.8))}
+.feature-card.highlight::before{background:linear-gradient(90deg,transparent,rgba(245,158,11,.15),transparent)}
+
+/* ── PLANS ── */
+.plans-section{margin-bottom:56px}
+.plans-title{font-family:'Syne',sans-serif;font-weight:800;font-size:20px;text-align:center;margin-bottom:8px}
+.plans-sub{text-align:center;color:var(--tx2);font-size:13px;margin-bottom:32px}
+
+.plans-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:640px){.plans-grid{grid-template-columns:1fr}}
+
+.plan-card{
+  background:rgba(15,17,23,.8);border:2px solid var(--b);border-radius:22px;
+  padding:28px 22px;text-align:center;cursor:pointer;transition:all .3s;
+  position:relative;overflow:hidden;user-select:none;
+}
+.plan-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.07),transparent)}
+.plan-card:hover{border-color:var(--b2);transform:translateY(-3px);box-shadow:0 16px 48px rgba(0,0,0,.3)}
+.plan-card.selected{border-color:var(--gold);background:linear-gradient(145deg,rgba(245,158,11,.1),rgba(15,17,23,.9));box-shadow:0 0 0 1px rgba(245,158,11,.2),0 16px 48px rgba(245,158,11,.1)}
+.plan-card.popular{border-color:rgba(245,158,11,.4)}
+
+.plan-popular-tag{
+  position:absolute;top:-1px;left:50%;transform:translateX(-50%);
+  background:linear-gradient(135deg,var(--gold),var(--gold2));
+  color:#000;font-size:9px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;
+  padding:4px 14px;border-radius:0 0 10px 10px;
+}
+.plan-period{font-size:11px;font-weight:700;color:var(--tx2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:16px;margin-top:8px}
+.plan-price{font-family:'Syne',sans-serif;font-weight:900;font-size:42px;line-height:1;color:var(--tx);margin-bottom:4px}
+.plan-price sup{font-size:20px;font-weight:700;vertical-align:top;margin-top:8px;display:inline-block;color:var(--tx2)}
+.plan-price-unit{font-size:12px;color:var(--tx2);margin-bottom:16px}
+.plan-saving{font-size:11px;font-weight:700;color:var(--gn);background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.25);border-radius:20px;padding:3px 10px;display:inline-block;margin-bottom:16px}
+.plan-saving.hidden{visibility:hidden}
+.plan-divider{height:1px;background:var(--b);margin:16px 0}
+.plan-perks{display:flex;flex-direction:column;gap:8px;text-align:left;margin-bottom:20px}
+.plan-perk{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--tx2)}
+.plan-perk .check{color:var(--gn);font-size:13px;flex-shrink:0}
+.plan-btn{
+  width:100%;padding:12px;border-radius:12px;border:2px solid transparent;
+  font-family:'Syne',sans-serif;font-weight:700;font-size:13px;cursor:pointer;
+  transition:all .25s;
+  background:var(--sf2);color:var(--tx2);border-color:var(--b);
+}
+.plan-card.selected .plan-btn{
+  background:linear-gradient(135deg,var(--gold),var(--gold2));
+  color:#000;border-color:transparent;
+  box-shadow:0 4px 20px rgba(245,158,11,.35);
+}
+.plan-card:not(.selected):hover .plan-btn{border-color:var(--b2);color:var(--tx)}
+.plan-card.selected .plan-period{color:var(--gold)}
+
+/* ── PAYMENT FORM ── */
+.payment-section{background:rgba(15,17,23,.85);border:1px solid var(--b);border-radius:24px;padding:36px 32px;backdrop-filter:blur(16px);position:relative;overflow:hidden}
+.payment-section::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(245,158,11,.2),transparent)}
+
+.pay-title{font-family:'Syne',sans-serif;font-weight:800;font-size:18px;margin-bottom:6px}
+.pay-sub{font-size:13px;color:var(--tx2);margin-bottom:28px}
+
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+@media(max-width:520px){.form-row{grid-template-columns:1fr}}
+.form-group{display:flex;flex-direction:column;gap:7px;margin-bottom:14px}
+.form-label{font-size:11px;font-weight:600;color:var(--tx2);text-transform:uppercase;letter-spacing:.7px}
+.form-input{
+  background:var(--sf2);border:1px solid var(--b2);color:var(--tx);
+  padding:13px 15px;border-radius:12px;font-family:'DM Sans',sans-serif;font-size:14px;
+  outline:none;transition:border-color .2s,box-shadow .2s;width:100%;
+}
+.form-input:focus{border-color:var(--gold);box-shadow:0 0 0 3px var(--goldg)}
+.form-input::placeholder{color:var(--tx2)}
+
+.card-icons{display:flex;gap:8px;margin-bottom:20px;align-items:center}
+.card-icon{width:44px;height:28px;border-radius:6px;background:var(--sf2);border:1px solid var(--b2);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--tx2);letter-spacing:.5px}
+.card-icon.visa{color:#1a1f71;background:#fff;border-color:#e5e7eb}
+.card-icon.mc{background:#fff;border-color:#e5e7eb}
+.card-icon.mir{color:#0a5c2a;background:#fff;border-color:#e5e7eb}
+.card-icons-label{font-size:11px;color:var(--tx2)}
+
+.order-summary{background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.25);border-radius:14px;padding:18px 20px;margin-bottom:24px}
+.os-row{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--tx2);margin-bottom:8px}
+.os-row:last-child{margin-bottom:0;font-weight:700;font-size:15px;color:var(--tx);border-top:1px solid rgba(245,158,11,.2);padding-top:12px;margin-top:4px}
+.os-row .os-val-gold{color:var(--gold);font-weight:700}
+
+.pay-btn{
+  width:100%;padding:16px;border-radius:14px;border:none;
+  background:linear-gradient(135deg,var(--gold),var(--gold2),#fff8dc);
+  color:#000;font-family:'Syne',sans-serif;font-weight:800;font-size:16px;
+  cursor:pointer;transition:all .25s;
+  box-shadow:0 6px 28px rgba(245,158,11,.4);
+  position:relative;overflow:hidden;
+}
+.pay-btn::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(255,255,255,.2),transparent);
+  opacity:0;transition:opacity .2s;
+}
+.pay-btn:hover::before{opacity:1}
+.pay-btn:hover{transform:translateY(-1px);box-shadow:0 10px 36px rgba(245,158,11,.5)}
+.pay-btn:active{transform:scale(.98)}
+.pay-btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
+
+.pay-security{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:16px;font-size:11px;color:var(--tx2)}
+.pay-security svg{width:13px;height:13px;opacity:.5}
+
+/* ── SUCCESS OVERLAY ── */
+#successOverlay{
+  display:none;position:fixed;inset:0;z-index:200;
+  background:rgba(8,9,16,.95);backdrop-filter:blur(20px);
+  align-items:center;justify-content:center;padding:20px;
+}
+#successOverlay.show{display:flex;animation:fadeIn .3s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.success-card{
+  text-align:center;max-width:420px;width:100%;
+  background:rgba(15,17,23,.9);border:1px solid rgba(245,158,11,.4);
+  border-radius:28px;padding:48px 36px;
+  box-shadow:0 0 80px rgba(245,158,11,.15),0 0 160px rgba(245,158,11,.06);
+}
+.success-icon{font-size:72px;display:block;margin-bottom:20px;animation:pop .5s cubic-bezier(.34,1.56,.64,1) both}
+@keyframes pop{from{transform:scale(0) rotate(-20deg)}to{transform:scale(1) rotate(0)}}
+.success-title{font-family:'Syne',sans-serif;font-weight:900;font-size:28px;margin-bottom:10px;background:linear-gradient(135deg,var(--gold),var(--gold2));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.success-sub{font-size:14px;color:var(--tx2);line-height:1.7;margin-bottom:28px}
+.success-btn{display:inline-block;padding:13px 32px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#000;border-radius:12px;font-family:'Syne',sans-serif;font-weight:800;font-size:14px;border:none;cursor:pointer;transition:all .2s;text-decoration:none;box-shadow:0 4px 20px rgba(245,158,11,.35)}
+.success-btn:hover{transform:translateY(-1px);box-shadow:0 8px 28px rgba(245,158,11,.45)}
+
+/* ── PARTICLES ── */
+.particle{position:fixed;pointer-events:none;z-index:300;font-size:24px;animation:particle-fly 2.5s ease-out forwards}
+@keyframes particle-fly{
+  0%{opacity:1;transform:translateY(0) scale(1)}
+  100%{opacity:0;transform:translateY(-180px) scale(0) rotate(360deg)}
+}
+
+/* ── TOAST ── */
+#toast{position:fixed;bottom:24px;right:24px;z-index:400;background:var(--sf);border:1px solid var(--b2);border-radius:12px;padding:12px 18px;font-size:13px;box-shadow:0 8px 32px rgba(0,0,0,.5);display:none}
+#toast.show{display:block;animation:slideUp .2s ease}
+#toast.error{border-color:rgba(248,113,113,.4);color:var(--rd)}
+#toast.success{border-color:rgba(245,158,11,.4);color:var(--gold)}
+@keyframes slideUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+
+<!-- SUCCESS OVERLAY -->
+<div id="successOverlay">
+  <div class="success-card">
+    <span class="success-icon">⭐</span>
+    <div class="success-title">BAZA Premium активирован!</div>
+    <div class="success-sub" id="successText">
+      Добро пожаловать в BAZA Premium.<br>
+      AI-функции и 60 FPS трансляция теперь доступны.
+    </div>
+    <button class="success-btn" onclick="closePremiumPage()">→ Вернуться в BAZA</button>
+  </div>
+</div>
+
+<script>
+function closePremiumPage() {
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'premium:close' }, '*');
+      return;
+    }
+  } catch(e) {}
+  window.location.href = '/';
+}
+</script>
+
+<div id="toast"></div>
+
+<div class="page">
+
+  <!-- NAV -->
+  <div class="nav">
+    <div class="nav-logo">BAZA</div>
+    <a href="/" class="nav-back">← Вернуться в мессенджер</a>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <span class="hero-crown">👑</span>
+    <h1 class="hero-title">Разблокируй <span class="gold">BAZA Premium</span></h1>
+    <p class="hero-sub">AI-транскрипция голоса, умные ответы GPT, демонстрация экрана в 60 FPS и золотой бейдж в профиле.</p>
+  </div>
+
+  <!-- FEATURES -->
+  <div class="features-grid">
+    <div class="feature-card highlight">
+      <div class="feature-icon">🤖</div>
+      <div class="feature-title">AI Smart Reply</div>
+      <div class="feature-desc">GPT анализирует контекст чата и предлагает 3 варианта ответа одним нажатием</div>
+    </div>
+    <div class="feature-card highlight">
+      <div class="feature-icon">🎙️</div>
+      <div class="feature-title">Whisper транскрипция</div>
+      <div class="feature-desc">Преобразование голосовых сообщений в текст с помощью OpenAI Whisper-1</div>
+    </div>
+    <div class="feature-card highlight">
+      <div class="feature-icon">🤖</div>
+      <div class="feature-title">@gpt в чате</div>
+      <div class="feature-desc">Напиши @gpt — AI ответит прямо в чат с учётом всего контекста переписки</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🖥️</div>
+      <div class="feature-title">Экран в 60 FPS</div>
+      <div class="feature-desc">Демонстрация экрана в групповых звонках с вдвое большей частотой кадров</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">⭐</div>
+      <div class="feature-title">Золотой профиль</div>
+      <div class="feature-desc">Уникальный золотой бейдж и кольцо вокруг аватарки — вас видно сразу</div>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <div class="feature-title">Ранний доступ</div>
+      <div class="feature-desc">Premium-подписчики первыми получают новые функции до публичного релиза</div>
+    </div>
+  </div>
+
+  <!-- PLANS -->
+  <div class="plans-section">
+    <div class="plans-title">Выберите план</div>
+    <div class="plans-sub">Все планы включают полный доступ к Premium-функциям</div>
+    <div class="plans-grid">
+
+      <div class="plan-card" id="plan-month" onclick="selectPlan('month')">
+        <div class="plan-period">1 месяц</div>
+        <div class="plan-price"><sup>₽</sup>299</div>
+        <div class="plan-price-unit">в месяц</div>
+        <div class="plan-saving hidden">—</div>
+        <div class="plan-divider"></div>
+        <div class="plan-perks">
+          <div class="plan-perk"><span class="check">✓</span>Все AI-функции</div>
+          <div class="plan-perk"><span class="check">✓</span>60 FPS трансляция</div>
+          <div class="plan-perk"><span class="check">✓</span>Premium бейдж</div>
+        </div>
+        <button class="plan-btn" id="planbtn-month">Выбрать</button>
+      </div>
+
+      <div class="plan-card popular selected" id="plan-half" onclick="selectPlan('half')">
+        <div class="plan-popular-tag">🔥 ПОПУЛЯРНОЕ</div>
+        <div class="plan-period">6 месяцев</div>
+        <div class="plan-price"><sup>₽</sup>199</div>
+        <div class="plan-price-unit">в месяц · 1 194 ₽ итого</div>
+        <div class="plan-saving">Экономия 600 ₽</div>
+        <div class="plan-divider"></div>
+        <div class="plan-perks">
+          <div class="plan-perk"><span class="check">✓</span>Все AI-функции</div>
+          <div class="plan-perk"><span class="check">✓</span>60 FPS трансляция</div>
+          <div class="plan-perk"><span class="check">✓</span>Premium бейдж</div>
+        </div>
+        <button class="plan-btn" id="planbtn-half">Выбрать</button>
+      </div>
+
+      <div class="plan-card" id="plan-year" onclick="selectPlan('year')">
+        <div class="plan-period">12 месяцев</div>
+        <div class="plan-price"><sup>₽</sup>149</div>
+        <div class="plan-price-unit">в месяц · 1 788 ₽ итого</div>
+        <div class="plan-saving">Экономия 1 800 ₽</div>
+        <div class="plan-divider"></div>
+        <div class="plan-perks">
+          <div class="plan-perk"><span class="check">✓</span>Все AI-функции</div>
+          <div class="plan-perk"><span class="check">✓</span>60 FPS трансляция</div>
+          <div class="plan-perk"><span class="check">✓</span>Premium бейдж</div>
+          <div class="plan-perk"><span class="check" style="color:var(--gold)">★</span>Ранний доступ</div>
+        </div>
+        <button class="plan-btn" id="planbtn-year">Выбрать</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- PAYMENT FORM -->
+  <div class="payment-section">
+    <div class="pay-title">Оплата подписки</div>
+    <div class="pay-sub">Защищённый платёж · Отмена в любое время</div>
+
+    <div class="card-icons">
+      <div class="card-icon visa">VISA</div>
+      <div class="card-icon mc">
+        <svg width="28" height="18" viewBox="0 0 28 18" fill="none">
+          <circle cx="10" cy="9" r="9" fill="#EB001B"/>
+          <circle cx="18" cy="9" r="9" fill="#F79E1B"/>
+          <path d="M14 3.2A9 9 0 0 1 17.3 9 9 9 0 0 1 14 14.8 9 9 0 0 1 10.7 9 9 9 0 0 1 14 3.2z" fill="#FF5F00"/>
+        </svg>
+      </div>
+      <div class="card-icon mir" style="font-size:9px">МИР</div>
+      <span class="card-icons-label">и другие карты</span>
+    </div>
+
+    <!-- Order summary -->
+    <div class="order-summary" id="orderSummary">
+      <div class="os-row"><span>BAZA Premium</span><span id="osPlan">6 месяцев</span></div>
+      <div class="os-row"><span>Стоимость</span><span id="osPrice">1 194 ₽</span></div>
+      <div class="os-row"><span>Скидка</span><span id="osDiscount" class="os-val-gold">−600 ₽</span></div>
+      <div class="os-row"><span>Итого</span><span id="osTotal" class="os-val-gold">1 194 ₽</span></div>
+    </div>
+
+    <div class="form-group">
+      <div class="form-label">Номер карты</div>
+      <input type="text" class="form-input" id="cardNumber" placeholder="0000 0000 0000 0000" maxlength="19" oninput="fmtCard(this)">
+    </div>
+    <div class="form-row">
+      <div class="form-group" style="margin-bottom:0">
+        <div class="form-label">Срок действия</div>
+        <input type="text" class="form-input" id="cardExpiry" placeholder="ММ / ГГ" maxlength="7" oninput="fmtExpiry(this)">
+      </div>
+      <div class="form-group" style="margin-bottom:0">
+        <div class="form-label">CVV / CVC</div>
+        <input type="text" class="form-input" id="cardCvv" placeholder="•••" maxlength="3" oninput="this.value=this.value.replace(/\D/g,'')">
+      </div>
+    </div>
+    <div class="form-group" style="margin-top:14px">
+      <div class="form-label">Имя держателя карты</div>
+      <input type="text" class="form-input" id="cardName" placeholder="IVAN IVANOV" oninput="this.value=this.value.toUpperCase()">
+    </div>
+
+    <button class="pay-btn" id="payBtn" onclick="processPayment()">
+      ⭐ Активировать Premium — <span id="payBtnAmount">1 194 ₽</span>
+    </button>
+    <div class="pay-security">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/></svg>
+      Платёж защищён SSL · Данные карты не сохраняются
+    </div>
+  </div>
+
+</div><!-- .page -->
+
+<script>
+const PLANS = {
+  month: { label:'1 месяц',  price:299,  total:299,   discount:0,   saving:'',      monthlyPrice:299 },
+  half:  { label:'6 месяцев',price:199,  total:1194,  discount:600, saving:'−600 ₽', monthlyPrice:199 },
+  year:  { label:'12 месяцев',price:149, total:1788,  discount:1800,saving:'−1 800 ₽',monthlyPrice:149 },
+};
+
+let currentPlan = 'half';
+
+function selectPlan(id) {
+  currentPlan = id;
+  document.querySelectorAll('.plan-card').forEach(c => c.classList.remove('selected'));
+  document.getElementById('plan-' + id).classList.add('selected');
+  updateOrderSummary();
+}
+
+function updateOrderSummary() {
+  const p = PLANS[currentPlan];
+  document.getElementById('osPlan').textContent    = p.label;
+  document.getElementById('osPrice').textContent   = p.total.toLocaleString('ru-RU') + ' ₽';
+  document.getElementById('osDiscount').textContent = p.discount ? '−' + p.discount.toLocaleString('ru-RU') + ' ₽' : '0 ₽';
+  document.getElementById('osTotal').textContent   = p.total.toLocaleString('ru-RU') + ' ₽';
+  document.getElementById('payBtnAmount').textContent = p.total.toLocaleString('ru-RU') + ' ₽';
+}
+
+function fmtCard(el) {
+  let v = el.value.replace(/\D/g,'').slice(0,16);
+  el.value = v.replace(/(.{4})/g,'$1 ').trim();
+}
+
+function fmtExpiry(el) {
+  let v = el.value.replace(/\D/g,'').slice(0,4);
+  if (v.length > 2) v = v.slice(0,2) + ' / ' + v.slice(2);
+  el.value = v;
+}
+
+function validateForm() {
+  const num  = document.getElementById('cardNumber').value.replace(/\s/g,'');
+  const exp  = document.getElementById('cardExpiry').value;
+  const cvv  = document.getElementById('cardCvv').value;
+  const name = document.getElementById('cardName').value.trim();
+  if (num.length < 16)   { showToast('Введите полный номер карты','error'); return false; }
+  if (exp.length < 7)    { showToast('Введите срок действия','error'); return false; }
+  if (cvv.length < 3)    { showToast('Введите CVV код','error'); return false; }
+  if (name.length < 3)   { showToast('Введите имя держателя карты','error'); return false; }
+  return true;
+}
+
+async function processPayment() {
+  if (!validateForm()) return;
+
+  const btn = document.getElementById('payBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Обработка платежа...';
+
+  // Имитация обработки платежа (2.5 сек)
+  await new Promise(r => setTimeout(r, 2500));
+
+  // Успех — показываем оверлей
+  const p = PLANS[currentPlan];
+  document.getElementById('successText').innerHTML =
+    `Подписка <b>${p.label}</b> активирована!<br>AI-функции и 60 FPS трансляция теперь доступны.`;
+
+  spawnParticles();
+  document.getElementById('successOverlay').classList.add('show');
+
+  btn.disabled = false;
+  btn.textContent = '⭐ Активировать Premium — ' + p.total.toLocaleString('ru-RU') + ' ₽';
+
+  // Notify parent window (when opened in iframe overlay)
+  try {
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: 'premium:purchased', plan: currentPlan }, '*');
+    }
+  } catch(e) {}
+
+  // Also notify via socket if available on this page
+  try {
+    if (typeof io !== 'undefined') {
+      const phone = new URLSearchParams(window.location.search).get('phone');
+      if (phone) {
+        const s = io();
+        s.emit('premium:purchase', { phone, plan: currentPlan });
+        setTimeout(() => s.disconnect(), 3000);
+      }
+    }
+  } catch(e) {}
+}
+
+function spawnParticles() {
+  const emojis = ['⭐','✨','🎉','💛','🌟','🏆'];
+  for (let i = 0; i < 18; i++) {
+    setTimeout(() => {
+      const el = document.createElement('div');
+      el.className = 'particle';
+      el.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+      el.style.left  = 20 + Math.random() * 60 + 'vw';
+      el.style.bottom = Math.random() * 30 + 'vh';
+      el.style.animationDuration = (1.5 + Math.random()) + 's';
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 3000);
+    }, i * 100);
+  }
+}
+
+function showToast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = `show ${type}`;
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// Init
+updateOrderSummary();
+</script>
+</body>
+</html>

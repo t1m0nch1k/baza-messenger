@@ -1,0 +1,32 @@
+{
+  "name": "messenger",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@mistralai/mistralai": "^1.14.1",
+    "axios": "^1.13.6",
+    "bcrypt": "^6.0.0",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "form-data": "^4.0.5",
+    "groq-sdk": "^0.37.0",
+    "localtunnel": "^2.0.2",
+    "multer": "^2.1.0",
+    "nodejs-whisper": "^0.2.9",
+    "nodemailer": "^8.0.2",
+    "pg": "^8.20.0",
+    "socket.io": "^4.8.3",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7",
+    "whisper-node": "^1.1.1"
+  }
+}

@@ -1,0 +1,80 @@
+BAZA — Messenger (v1.0 Alpha)
+
+RU
+
+BAZA — это высокопроизводительная коммуникационная платформа нового
+поколения. Проект ориентирован на интеграцию передового искусственного
+интеллекта в повседневное общение, обеспечивая при этом полный контроль
+пользователя над своими данными.
+
+EN
+
+BAZA is a next-generation high-performance communication platform. The
+project focuses on integrating cutting-edge AI into everyday
+communication while ensuring that users retain full control over their
+data.
+
+  -------------------------------------
+  KEY FEATURES / КЛЮЧЕВЫЕ ВОЗМОЖНОСТИ
+  -------------------------------------
+
+AI Engine / Интеллект - Mistral AI — умные ответы (Smart Replies) и
+чат-ассистент на базе модели Mistral-Small - Summarization —
+автоматическая суммаризация длинных диалогов - Voice-to-Text — локальная
+транскрипция голосовых сообщений через Whisper
+
+Performance / Производительность - Core: сервер написан на Node.js с
+использованием Socket.io - Optimization: оптимизация для современных
+многоядерных процессоров (i7-12650H и выше)
+
+Social Features / Социальные функции - Stories — временные публикации -
+Stickers — система стикерпаков с возможностью AI‑генерации
+
+  --------------------------
+  INSTALLATION / УСТАНОВКА
+  --------------------------
+
+RU — Инструкция по запуску
+
+1.  Клонируйте репозиторий git clone
+    https://github.com/your-username/baza-messenger.git
+
+2.  Установите зависимости npm install
+
+3.  Настройте окружение Создайте файл .env на основе .env.example
+    Добавьте MISTRAL_API_KEY и SMTP настройки
+
+4.  Запустите сервер node server.js
+
+------------------------------------------------------------------------
+
+EN — Setup Guide
+
+1.  Clone the repository git clone
+    https://github.com/your-username/baza-messenger.git
+
+2.  Install dependencies npm install
+
+3.  Configure environment Create a .env file based on .env.example Add
+    MISTRAL_API_KEY and SMTP settings
+
+4.  Run the server node server.js
+
+  ------------
+  TECH STACK
+  ------------
+
+Backend: Node.js Express Socket.io
+
+Database: SQLite PostgreSQL
+
+AI: Mistral AI Groq API Whisper
+
+Frontend: Vanilla JavaScript CSS3 (Glassmorphism UI)
+
+  ---------
+  LICENSE
+  ---------
+
+Distributed under the MIT License. See the LICENSE file for more
+information.
