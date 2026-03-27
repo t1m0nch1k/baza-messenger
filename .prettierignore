@@ -1,0 +1,11 @@
+node_modules
+**/dist
+**/.next
+**/.turbo
+**/build
+**/.vite
+baza.db*
+uploads
+videos
+voice
+

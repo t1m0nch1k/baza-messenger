@@ -4,8 +4,10 @@
   "description": "",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "test": "echo \"TODO\" && exit 0",
+    "start": "node server.js",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check"
   },
   "keywords": [],
   "author": "",
@@ -28,5 +30,9 @@
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
     "whisper-node": "^1.1.1"
+  },
+  "devDependencies": {
+    "eslint": "^10.1.0",
+    "prettier": "^3.8.1"
   }
 }

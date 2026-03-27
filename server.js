@@ -15,6 +15,8 @@ const { initDb, IS_PG } = require('./db');
 // ── APP SETUP ─────────────────────────────────────────────────────────────────
 const app    = express();
 const server = http.createServer(app);
+server.timeout = 180000;
+server.keepAliveTimeout = 180000;
 const io     = socketIo(server, { cors: { origin: '*' }, maxHttpBufferSize: 1e8 });
 
 const PORT        = process.env.PORT || 3000;
@@ -248,6 +250,69 @@ const parseMsg = m => {
 
     global.db = await initDb();
 
+    // ── Миграции новых таблиц ──────────────────────────────────────────────────
+    await global.db.run(`CREATE TABLE IF NOT EXISTS pinned_messages (
+        chatId TEXT PRIMARY KEY, messageId TEXT NOT NULL,
+        pinnedBy TEXT, pinnedAt TEXT)`).catch(()=>{});
+    await global.db.run(`CREATE TABLE IF NOT EXISTS drafts (
+        phone TEXT NOT NULL, chatId TEXT NOT NULL, text TEXT, updatedAt TEXT,
+        PRIMARY KEY(phone, chatId))`).catch(()=>{});
+    await global.db.run(`CREATE TABLE IF NOT EXISTS message_reads (
+        messageId TEXT NOT NULL, chatId TEXT NOT NULL,
+        readerPhone TEXT NOT NULL, readAt TEXT,
+        PRIMARY KEY(messageId, readerPhone))`).catch(()=>{});
+    await global.db.run(`ALTER TABLE users ADD COLUMN autoReply INTEGER DEFAULT 0`).catch(()=>{});
+    await global.db.run(`ALTER TABLE users ADD COLUMN autoReplyText TEXT DEFAULT ''`).catch(()=>{});
+    await global.db.run(`ALTER TABLE users ADD COLUMN premiumUntil TEXT DEFAULT NULL`).catch(()=>{});
+
+    await global.db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
+        id          TEXT PRIMARY KEY,
+        actorPhone  TEXT,
+        actorType   TEXT DEFAULT 'user',
+        action      TEXT NOT NULL,
+        targetPhone TEXT,
+        severity    TEXT DEFAULT 'info',
+        meta        TEXT,
+        ip          TEXT,
+        userAgent   TEXT,
+        timestamp   TEXT NOT NULL
+    )`).catch(()=>{});
+
+    // ── Таблицы каналов (создаём если нет — безопасно при любом db.js) ─────────
+    await global.db.run(`CREATE TABLE IF NOT EXISTS channels (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
+        avatar TEXT, createdBy TEXT NOT NULL, isPublic INTEGER DEFAULT 1,
+        subscriberCount INTEGER DEFAULT 0, createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+    )`).catch(()=>{});
+    await global.db.run(`CREATE TABLE IF NOT EXISTS channel_subscribers (
+        channelId TEXT NOT NULL, phone TEXT NOT NULL, role TEXT DEFAULT 'subscriber',
+        notifications INTEGER DEFAULT 1,
+        joinedAt TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(channelId, phone)
+    )`).catch(()=>{});
+    await global.db.run(`CREATE TABLE IF NOT EXISTS channel_posts (
+        id TEXT PRIMARY KEY, channelId TEXT NOT NULL, authorPhone TEXT NOT NULL,
+        authorName TEXT NOT NULL, text TEXT, fileUrl TEXT, videoUrl TEXT,
+        views INTEGER DEFAULT 0, timestamp TEXT NOT NULL
+    )`).catch(()=>{});
+    await global.db.run(`CREATE TABLE IF NOT EXISTS channel_comments (
+        id TEXT PRIMARY KEY, postId TEXT NOT NULL, channelId TEXT NOT NULL,
+        senderPhone TEXT NOT NULL, senderName TEXT NOT NULL,
+        text TEXT NOT NULL, timestamp TEXT NOT NULL
+    )`).catch(()=>{});
+    // Миграция: добавить поле notifications если его нет
+    await global.db.run(`ALTER TABLE channel_subscribers ADD COLUMN notifications INTEGER DEFAULT 1`).catch(()=>{});
+    // Реакции на посты канала
+    await global.db.run(`CREATE TABLE IF NOT EXISTS channel_post_reactions (
+        postId TEXT NOT NULL, phone TEXT NOT NULL, emoji TEXT NOT NULL,
+        createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(postId, phone, emoji)
+    )`).catch(()=>{});
+    // Аватар канала (миграция поля)
+    await global.db.run(`ALTER TABLE channels ADD COLUMN avatar TEXT DEFAULT NULL`).catch(()=>{});
+    // Инвайт-токен для приватных каналов
+    await global.db.run(`ALTER TABLE channels ADD COLUMN inviteToken TEXT DEFAULT NULL`).catch(()=>{});
+
     const aiP = getAiProvider();
     console.log(`🤖 AI провайдер: ${aiP ? '✅ ' + aiP.name + ' (' + aiP.model + ')' : '❌ нет ключей MISTRAL_API_KEY / GROQ_API_KEY'}`);
     console.log(`📧 SMTP: ${SMTP_USER ? '✅ ' + SMTP_USER : '⚠️  не настроен'}`);
@@ -288,6 +353,45 @@ app.get('/api/stickerpacks', async (req, res) => {
         packs.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
         res.json({ packs });
     } catch (e) { console.error('Sticker API:', e); res.json({ packs: [] }); }
+});
+
+// ── ОНЛАЙН-СЧЁТЧИК ────────────────────────────────────────────────────────────
+app.get('/api/stats/online', async (req, res) => {
+    try {
+        const row   = await global.db.get("SELECT COUNT(*) c FROM users WHERE status='online'");
+        const total = await global.db.get('SELECT COUNT(*) c FROM users');
+        res.json({ online: row.c, total: total.c });
+    } catch { res.json({ online: 0, total: 0 }); }
+});
+
+// ── ЭКСПОРТ ЧАТА ──────────────────────────────────────────────────────────────
+app.get('/api/chat/export', async (req, res) => {
+    const { phone, chatId } = req.query;
+    if (!phone || !chatId) return res.status(400).json({ error: 'Нужны phone и chatId' });
+    const isParticipant = chatId.includes(phone) ||
+        await global.db.get('SELECT 1 FROM group_members WHERE groupId=? AND phone=?', [chatId, phone]).catch(()=>null);
+    if (!isParticipant) return res.status(403).json({ error: 'Нет доступа' });
+    const msgs = await global.db.all(
+        'SELECT senderName,text,timestamp,audioUrl,videoUrl,fileUrl FROM messages WHERE chatId=? ORDER BY timestamp ASC',
+        [chatId]
+    );
+    const lines = msgs.map(m => {
+        const time    = new Date(m.timestamp).toLocaleString('ru-RU');
+        const content = m.text || (m.audioUrl?'[Голосовое]':m.videoUrl?'[Видео]':m.fileUrl?'[Файл]':'');
+        return `[${time}] ${m.senderName}: ${content}`;
+    });
+    const out = `БАЗА Мессенджер — история чата\nЭкспорт: ${new Date().toLocaleString('ru-RU')}\n${'─'.repeat(50)}\n${lines.join('\n')}`;
+    res.setHeader('Content-Type','text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition','attachment; filename="baza_chat.txt"');
+    res.send(out);
+});
+
+app.get('/api/stats/online', async (req, res) => {
+    try {
+        const row = await global.db.get("SELECT COUNT(*) c FROM users WHERE status='online'");
+        const total = await global.db.get('SELECT COUNT(*) c FROM users');
+        res.json({ online: row.c, total: total.c });
+    } catch { res.json({ online: 0, total: 0 }); }
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -604,6 +708,28 @@ io.use(async (socket, next) => {
 
 function isAdmin(key) { return key === ADMIN_KEY; }
 
+async function auditLog({ actorPhone = null, actorType = 'user', action, targetPhone = null, severity = 'info', meta = null, ip = null, userAgent = null }) {
+    if (!global.db) return;
+    try {
+        const id = 'log_' + uid();
+        await global.db.run(
+            'INSERT INTO audit_logs (id,actorPhone,actorType,action,targetPhone,severity,meta,ip,userAgent,timestamp) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [
+                id,
+                actorPhone,
+                actorType,
+                String(action || '').slice(0, 120),
+                targetPhone,
+                String(severity || 'info').slice(0, 20),
+                meta ? JSON.stringify(meta).slice(0, 20000) : null,
+                ip ? String(ip).slice(0, 80) : null,
+                userAgent ? String(userAgent).slice(0, 240) : null,
+                ts(),
+            ]
+        );
+    } catch (_) {}
+}
+
 async function getDirSize(dir) {
     let total = 0;
     try {
@@ -678,6 +804,13 @@ io.on('connection', socket => {
         try {
             await global.db.run('UPDATE users SET isBanned=? WHERE phone=?', [ban ? 1 : 0, phone]);
             socket.emit('admin:ban:ok', { phone, isBanned: ban ? 1 : 0 });
+            await auditLog({
+                actorType: 'admin_key',
+                action: ban ? 'admin.ban_user' : 'admin.unban_user',
+                targetPhone: phone,
+                severity: 'warn',
+                meta: { ban: !!ban },
+            });
             if (ban) {
                 const sid = socketsByPhone[phone];
                 if (sid) {
@@ -692,11 +825,47 @@ io.on('connection', socket => {
         if (!isAdmin(key)) return socket.emit('admin:error', 'Нет прав');
         try {
             const newVal = (isPremium !== undefined ? isPremium : premium) ? 1 : 0;
-            await global.db.run('UPDATE users SET isPremium=? WHERE phone=?', [newVal, phone]);
+            const until = newVal ? (plan?.until || null) : null;
+            await global.db.run('UPDATE users SET isPremium=?, premiumUntil=? WHERE phone=?', [newVal, until, phone]);
             socket.emit('admin:premium:ok', { phone, isPremium: newVal, plan });
+            await auditLog({
+                actorType: 'admin_key',
+                action: newVal ? 'admin.set_premium_on' : 'admin.set_premium_off',
+                targetPhone: phone,
+                severity: 'info',
+                meta: { isPremium: newVal, plan },
+            });
             const sid = socketsByPhone[phone];
             if (sid) io.to(sid).emit('premium:status', { isPremium: newVal, plan });
         } catch (e) { socket.emit('admin:error', 'Ошибка'); }
+    });
+
+    socket.on('admin:get_logs', async ({ key, limit, offset, action, actorPhone, targetPhone, severity, since, until }) => {
+        if (!isAdmin(key)) return socket.emit('admin:error', 'Нет прав');
+        try {
+            const lim = Math.max(1, Math.min(parseInt(limit || 50, 10), 200));
+            const off = Math.max(0, parseInt(offset || 0, 10));
+            const where = [];
+            const params = [];
+
+            if (action) { where.push('action LIKE ?'); params.push(`%${String(action).trim()}%`); }
+            if (severity) { where.push('severity = ?'); params.push(String(severity).trim()); }
+            if (actorPhone) { where.push('actorPhone = ?'); params.push(String(actorPhone).trim()); }
+            if (targetPhone) { where.push('targetPhone = ?'); params.push(String(targetPhone).trim()); }
+            if (since) { where.push('timestamp >= ?'); params.push(String(since).trim()); }
+            if (until) { where.push('timestamp <= ?'); params.push(String(until).trim()); }
+
+            const w = where.length ? ('WHERE ' + where.join(' AND ')) : '';
+            const totalRow = await global.db.get(`SELECT COUNT(*) c FROM audit_logs ${w}`, params);
+            const rows = await global.db.all(
+                `SELECT id,actorPhone,actorType,action,targetPhone,severity,meta,ip,userAgent,timestamp
+                 FROM audit_logs ${w}
+                 ORDER BY timestamp DESC
+                 LIMIT ? OFFSET ?`,
+                [...params, lim, off]
+            );
+            socket.emit('admin:logs:result', { total: totalRow?.c || 0, limit: lim, offset: off, logs: rows });
+        } catch (e) { socket.emit('admin:error', 'Ошибка логов'); }
     });
 
     socket.on('admin:delete_user', async ({ key, phone }) => {
@@ -810,11 +979,20 @@ io.on('connection', socket => {
     socket.on('auth', async ({ phone, password }) => {
         try {
             const p = (phone || '').trim();
-            const user = await global.db.get('SELECT * FROM users WHERE phone=?', [p]);
+            let user = await global.db.get('SELECT * FROM users WHERE phone=?', [p]);
             if (!user || !(await bcrypt.compare(password, user.passwordHash)))
                 return socket.emit('auth:error', 'Неверный номер или пароль');
             if (user.isBanned) return socket.emit('auth:error', 'Ваш аккаунт заблокирован.');
             if (!user.isVerified) return socket.emit('auth:error', 'Сначала подтвердите почту.');
+
+            // Premium expiry check (best-effort)
+            if (user.isPremium && user.premiumUntil) {
+                const exp = Date.parse(user.premiumUntil);
+                if (!Number.isNaN(exp) && exp <= Date.now()) {
+                    await global.db.run('UPDATE users SET isPremium=0, premiumUntil=NULL WHERE phone=?', [p]).catch(()=>{});
+                    user = { ...user, isPremium: 0, premiumUntil: null };
+                }
+            }
 
             await global.db.run('UPDATE users SET socketId=?,status=? WHERE phone=?', [socket.id, 'online', p]);
             socket.phone    = p;
@@ -824,6 +1002,7 @@ io.on('connection', socket => {
             socketsByPhone[p] = socket.id;
 
             socket.emit('auth:success', { phone: p, nickname: user.nickname, avatar: user.avatar, isPremium: socket.isPremium });
+            await auditLog({ actorPhone: p, actorType: 'user', action: 'auth.login', targetPhone: p, severity: 'info' });
 
             // История сообщений (личные + группы)
             const msgQ = `SELECT m.*,(SELECT json_group_array(json_object('emoji',emoji,'senderPhone',senderPhone)) FROM reactions WHERE messageId=m.id) as rxns FROM messages m`;
@@ -856,6 +1035,67 @@ io.on('connection', socket => {
             socket.emit('stories:list', stories);
             io.emit('user:status', { phone: p, status: 'online' });
         } catch (err) { console.error(err); socket.emit('auth:error', 'Ошибка сервера'); }
+    });
+
+    // ── МУЛЬТИАККАУНТ: проверить второй аккаунт (без смены сессии) ──────────
+    socket.on('auth:add_account', async ({ phone, password }) => {
+        try {
+            const p = (phone || '').trim();
+            const user = await global.db.get('SELECT * FROM users WHERE phone=?', [p]);
+            if (!user || !(await bcrypt.compare(password, user.passwordHash)))
+                return socket.emit('auth:add_account:error', 'Неверный номер или пароль');
+            if (user.isBanned) return socket.emit('auth:add_account:error', 'Аккаунт заблокирован');
+            if (!user.isVerified) return socket.emit('auth:add_account:error', 'Сначала подтвердите почту');
+            socket.emit('auth:add_account:ok', { phone: p, nickname: user.nickname });
+        } catch (e) { socket.emit('auth:add_account:error', 'Ошибка сервера'); }
+    });
+
+    // ── МУЛЬТИАККАУНТ: переключить активный аккаунт в той же сессии ─────────
+    socket.on('auth:switch', async ({ phone, password }) => {
+        try {
+            const p = (phone || '').trim();
+            const user = await global.db.get('SELECT * FROM users WHERE phone=?', [p]);
+            if (!user || !(await bcrypt.compare(password, user.passwordHash)))
+                return socket.emit('auth:switch:error', 'Неверные данные');
+            if (user.isBanned) return socket.emit('auth:switch:error', 'Аккаунт заблокирован');
+            if (!user.isVerified) return socket.emit('auth:switch:error', 'Сначала подтвердите почту');
+
+            // Обновить старый аккаунт — offline
+            if (socket.phone && socket.phone !== p) {
+                await global.db.run('UPDATE users SET status=?,lastSeen=? WHERE phone=?', ['offline', ts(), socket.phone]);
+                delete socketsByPhone[socket.phone];
+                io.emit('user:status', { phone: socket.phone, status: 'offline', lastSeen: ts() });
+            }
+
+            // Активировать новый
+            await global.db.run('UPDATE users SET socketId=?,status=? WHERE phone=?', [socket.id, 'online', p]);
+            socket.phone     = p;
+            socket.nickname  = user.nickname;
+            socket.avatar    = user.avatar;
+            socket.isPremium = user.isPremium || 0;
+            socketsByPhone[p] = socket.id;
+
+            socket.emit('auth:switch:ok', { phone: p, nickname: user.nickname, avatar: user.avatar, isPremium: socket.isPremium });
+
+            // Перезагружаем чаты, группы, каналы для нового аккаунта
+            const msgQ = `SELECT m.*,(SELECT json_group_array(json_object('emoji',emoji,'senderPhone',senderPhone)) FROM reactions WHERE messageId=m.id) as rxns FROM messages m`;
+            const direct = await global.db.all(msgQ + ` WHERE m.chatId LIKE ? ORDER BY m.id DESC LIMIT 200`, [`%${p}%`]);
+            const groups  = await global.db.all(`SELECT g.* FROM groups g JOIN group_members gm ON gm.groupId=g.id WHERE gm.phone=?`, [p]);
+            let groupMsgs = [];
+            for (const g of groups) {
+                const gm = await global.db.all(msgQ + ` WHERE m.chatId=? ORDER BY m.id DESC LIMIT 100`, [g.id]);
+                groupMsgs.push(...gm);
+            }
+            const allMsgs = [...direct, ...groupMsgs].map(parseMsg).sort((a, b) => a.id < b.id ? -1 : 1);
+            socket.emit('chat:history', allMsgs);
+            socket.emit('groups:list', groups);
+
+            const myChannels = await global.db.all(
+                `SELECT c.*,cs.role as myRole FROM channels c JOIN channel_subscribers cs ON cs.channelId=c.id WHERE cs.phone=?`, [p]
+            );
+            socket.emit('channel:my:list', myChannels);
+            io.emit('user:status', { phone: p, status: 'online' });
+        } catch (e) { console.error('auth:switch error:', e); socket.emit('auth:switch:error', 'Ошибка сервера'); }
     });
 
     socket.on('profile:update', async ({ nickname, bio }) => {
@@ -915,9 +1155,40 @@ io.on('connection', socket => {
     // ══════════════════════════════════════════════════════════════════════
     socket.on('message:send', async ({ chatId, text, replyTo }) => {
         if (!socket.phone || !text?.trim()) return;
-        // ИСПРАВЛЕНО: buildMsg теперь принимает явные параметры, не полагается на socket-объект
         const msg = buildMsg(socket.phone, socket.nickname, chatId, { text: text.trim(), replyTo: replyTo || null });
         await saveMsg(msg);
+
+        // ── @упоминания ────────────────────────────────────────────────────────
+        const mentions = (text.match(/@([a-zA-Zа-яА-ЯёЁ0-9_]+)/g) || []).map(m => m.slice(1));
+        for (const nick of mentions) {
+            const mentioned = await global.db.get('SELECT phone FROM users WHERE nickname=?', [nick]).catch(()=>null);
+            if (mentioned && mentioned.phone !== socket.phone) {
+                const sid = socketsByPhone[mentioned.phone];
+                if (sid) io.to(sid).emit('mention:received', {
+                    chatId, messageId: msg.id,
+                    from: socket.nickname, text: text.trim().slice(0, 80)
+                });
+            }
+        }
+
+        // ── Автоответ «Не в сети» ──────────────────────────────────────────────
+        if (!chatId.startsWith('g_')) {
+            const recipientPhone = chatId.split('_').find(p => p !== socket.phone);
+            if (recipientPhone) {
+                const recip = await global.db.get(
+                    'SELECT autoReply,autoReplyText,status FROM users WHERE phone=?', [recipientPhone]
+                ).catch(()=>null);
+                if (recip?.autoReply && recip.status !== 'online') {
+                    const replyText = recip.autoReplyText || '🤖 Сейчас не в сети. Отвечу позже!';
+                    const autoMsg = buildMsg(recipientPhone, '🤖 Автоответ', chatId, { text: replyText });
+                    await global.db.run(
+                        'INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp) VALUES (?,?,?,?,?,?)',
+                        [autoMsg.id, chatId, recipientPhone, '🤖 Автоответ', replyText, autoMsg.timestamp]
+                    ).catch(()=>{});
+                    await emitToChat(chatId, 'message:receive', { chatId, message: autoMsg });
+                }
+            }
+        }
 
         // @бот — БАЗА ИИ на Mistral (только для Плюс)
         if (text.trim().startsWith('@бот') && getAiProvider()) {
@@ -1012,6 +1283,63 @@ io.on('connection', socket => {
         }
     });
 
+    socket.on('message:forward', async ({ messageId, toChatId }) => {
+        if (!socket.phone || !messageId || !toChatId) return;
+        const orig = await global.db.get(
+            'SELECT text,fileUrl,audioUrl,videoUrl,senderName FROM messages WHERE id=?',
+            [messageId]
+        );
+        if (!orig) return socket.emit('error', 'Сообщение не найдено');
+ 
+        const fwdText = orig.text
+            ? `↩ Переслано от ${orig.senderName}:\n${orig.text}`
+            : `↩ Переслано от ${orig.senderName}`;
+ 
+        const msg = buildMsg(socket.phone, socket.nickname, toChatId, {
+            text: fwdText,
+            fileUrl: orig.fileUrl || null,
+            audioUrl: orig.audioUrl || null,
+            videoUrl: orig.videoUrl || null,
+            isForwarded: 1
+        });
+        await global.db.run(
+            `INSERT INTO messages (id,chatId,senderPhone,senderName,text,fileUrl,audioUrl,videoUrl,timestamp,replyTo)
+             VALUES (?,?,?,?,?,?,?,?,?,?)`,
+            [msg.id, toChatId, socket.phone, socket.nickname,
+             msg.text, msg.fileUrl||null, msg.audioUrl||null, msg.videoUrl||null,
+             msg.timestamp, null]
+        );
+        await emitToChat(toChatId, 'message:receive', { chatId: toChatId, message: msg });
+        socket.emit('message:forwarded', { messageId, toChatId });
+    });
+
+    socket.on('message:pin', async ({ messageId, chatId }) => {
+        if (!socket.phone || !messageId || !chatId) return;
+        // Только admin группы или участник личного чата
+        const msg = await global.db.get('SELECT id,text,senderName FROM messages WHERE id=? AND chatId=?', [messageId, chatId]);
+        if (!msg) return;
+        await global.db.run(
+            'INSERT OR REPLACE INTO pinned_messages (chatId,messageId,pinnedBy,pinnedAt) VALUES (?,?,?,?)',
+            [chatId, messageId, socket.phone, ts()]
+        );
+        await emitToChat(chatId, 'message:pinned', { chatId, messageId, text: msg.text, senderName: msg.senderName, pinnedBy: socket.nickname });
+    });
+ 
+    socket.on('message:unpin', async ({ chatId }) => {
+        if (!socket.phone || !chatId) return;
+        await global.db.run('DELETE FROM pinned_messages WHERE chatId=?', [chatId]);
+        await emitToChat(chatId, 'message:unpinned', { chatId });
+    });
+ 
+    socket.on('message:get_pinned', async ({ chatId }) => {
+        if (!socket.phone || !chatId) return;
+        const row = await global.db.get(
+            `SELECT pm.*,m.text,m.senderName FROM pinned_messages pm
+             JOIN messages m ON m.id=pm.messageId WHERE pm.chatId=?`, [chatId]
+        );
+        socket.emit('message:pinned:data', { chatId, pinned: row || null });
+    });
+
     socket.on('message:read', async ({ chatId }) => {
         if (!chatId || !socket.phone) return;
         await global.db.run('UPDATE messages SET isRead=1 WHERE chatId=? AND senderPhone!=? AND isRead=0', [chatId, socket.phone]);
@@ -1100,6 +1428,35 @@ io.on('connection', socket => {
             const p = chatId.split('_').find(x => x !== socket.phone);
             const s = socketsByPhone[p]; if (s) io.to(s).emit('user:typing', data);
         }
+    });
+
+    socket.on('draft:save', async ({ chatId, text }) => {
+        if (!socket.phone || !chatId) return;
+        if (!text?.trim()) {
+            await global.db.run('DELETE FROM drafts WHERE phone=? AND chatId=?', [socket.phone, chatId]).catch(() => {});
+        } else {
+            await global.db.run(
+                'INSERT OR REPLACE INTO drafts (phone,chatId,text,updatedAt) VALUES (?,?,?,?)',
+                [socket.phone, chatId, text.trim().slice(0, 4000), ts()]
+            ).catch(() => {});
+        }
+    });
+ 
+    socket.on('draft:get', async ({ chatId }) => {
+        if (!socket.phone || !chatId) return;
+        const row = await global.db.get(
+            'SELECT text FROM drafts WHERE phone=? AND chatId=?', [socket.phone, chatId]
+        ).catch(() => null);
+        socket.emit('draft:data', { chatId, text: row?.text || '' });
+    });
+ 
+    socket.on('draft:get_all', async () => {
+        if (!socket.phone) return;
+        const rows = await global.db.all(
+            'SELECT chatId,text,updatedAt FROM drafts WHERE phone=? ORDER BY updatedAt DESC',
+            [socket.phone]
+        ).catch(() => []);
+        socket.emit('draft:all', rows);
     });
 
     socket.on('user:status:request', async phones => {
@@ -1283,16 +1640,28 @@ io.on('connection', socket => {
         socket.emit('channel:search:results', channels);
     });
 
-    socket.on('channel:create', async ({ name, description, isPublic }) => {
+    socket.on('channel:create', async ({ name, description, isPublic, avatarData }) => {
         if (!socket.phone || !name?.trim()) return socket.emit('channel:error', 'Введите название');
         try {
             const id = 'ch_' + uid();
-            await global.db.run('INSERT INTO channels (id,name,description,createdBy,isPublic) VALUES (?,?,?,?,?)',
-                [id, name.trim(), description || '', socket.phone, isPublic !== false ? 1 : 0]);
-            await global.db.run('INSERT INTO channel_subscribers (channelId,phone,role) VALUES (?,?,?)', [id, socket.phone, 'admin']);
+            // Сохранить аватарку если передана
+            let avatarUrl = null;
+            if (avatarData?.startsWith('data:')) {
+                const ext = avatarData.includes('png') ? 'png' : 'jpg';
+                const fname = 'ch-avatar-' + id + '.' + ext;
+                await fs.writeFile(path.join(UPLOADS_DIR, fname), Buffer.from(avatarData.split(',')[1], 'base64'));
+                avatarUrl = '/uploads/' + fname;
+            }
+            // Генерировать inviteToken для приватных каналов
+            const inviteToken = (isPublic !== false && isPublic !== 0) ? null : require('crypto').randomBytes(12).toString('hex');
+            await global.db.run(
+                'INSERT INTO channels (id,name,description,createdBy,isPublic,avatar,inviteToken) VALUES (?,?,?,?,?,?,?)',
+                [id, name.trim(), description || '', socket.phone, isPublic !== false ? 1 : 0, avatarUrl, inviteToken]
+            );
+            await global.db.run('INSERT INTO channel_subscribers (channelId,phone,role) VALUES (?,?,?)', [id, socket.phone, 'owner']);
             const ch = await global.db.get('SELECT * FROM channels WHERE id=?', [id]);
-            socket.emit('channel:created', { ...ch, myRole: 'admin', subscriberCount: 1 });
-        } catch (e) { socket.emit('channel:error', 'Ошибка создания'); }
+            socket.emit('channel:created', { ...ch, myRole: 'owner', subscriberCount: 1 });
+        } catch (e) { console.error('channel:create', e); socket.emit('channel:error', 'Ошибка создания'); }
     });
 
     socket.on('channel:subscribe', async ({ channelId }) => {
@@ -1339,8 +1708,14 @@ io.on('connection', socket => {
             const post = { id, channelId, authorPhone: socket.phone, authorName: socket.nickname, text: text || null, fileUrl, videoUrl, views: 0, timestamp: ts(), commentCount: 0 };
             await global.db.run('INSERT INTO channel_posts (id,channelId,authorPhone,authorName,text,fileUrl,videoUrl,views,timestamp) VALUES (?,?,?,?,?,?,?,0,?)',
                 [id, channelId, socket.phone, socket.nickname, text || null, fileUrl, videoUrl, ts()]);
-            const subs = await global.db.all('SELECT phone FROM channel_subscribers WHERE channelId=?', [channelId]);
-            subs.forEach(s => { const sid = socketsByPhone[s.phone]; if (sid) io.to(sid).emit('channel:post:new', { channelId, post }); });
+            const subs = await global.db.all('SELECT phone, notifications FROM channel_subscribers WHERE channelId=?', [channelId]);
+            subs.forEach(s => {
+                const sid = socketsByPhone[s.phone];
+                if (sid) {
+                    // Всегда шлём пост в ленту; уведомление (звук/бейдж) только если notifications=1
+                    io.to(sid).emit('channel:post:new', { channelId, post, notify: s.notifications !== 0 });
+                }
+            });
         } catch (e) { socket.emit('channel:error', 'Ошибка публикации'); }
     });
 
@@ -1365,6 +1740,240 @@ io.on('connection', socket => {
 
     socket.on('channel:post:view', async ({ postId }) => {
         await global.db.run('UPDATE channel_posts SET views=views+1 WHERE id=?', [postId]).catch(() => {});
+    });
+
+    // ── РЕАКЦИИ НА ПОСТЫ ─────────────────────────────────────────────────────
+    socket.on('channel:post:react', async ({ postId, emoji }) => {
+        if (!socket.phone || !postId || !emoji) return;
+        try {
+            const post = await global.db.get('SELECT channelId FROM channel_posts WHERE id=?', [postId]);
+            if (!post) return;
+            // Проверяем подписку
+            const sub = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=? AND phone=?', [post.channelId, socket.phone]);
+            if (!sub) return socket.emit('channel:error', 'Нужно подписаться на канал');
+
+            const existing = await global.db.get(
+                'SELECT 1 FROM channel_post_reactions WHERE postId=? AND phone=? AND emoji=?',
+                [postId, socket.phone, emoji]
+            );
+            if (existing) {
+                await global.db.run('DELETE FROM channel_post_reactions WHERE postId=? AND phone=? AND emoji=?', [postId, socket.phone, emoji]);
+            } else {
+                await global.db.run('INSERT OR IGNORE INTO channel_post_reactions (postId,phone,emoji) VALUES (?,?,?)', [postId, socket.phone, emoji]);
+            }
+            // Агрегируем реакции
+            const reactions = await global.db.all(
+                `SELECT emoji, COUNT(*) as count, GROUP_CONCAT(phone) as phones
+                 FROM channel_post_reactions WHERE postId=? GROUP BY emoji ORDER BY count DESC`,
+                [postId]
+            );
+            const reactionList = reactions.map(r => ({
+                emoji: r.emoji, count: r.count,
+                mine: (r.phones || '').split(',').includes(socket.phone)
+            }));
+            // Рассылаем всем подписчикам
+            const subs = await global.db.all('SELECT phone FROM channel_subscribers WHERE channelId=?', [post.channelId]);
+            subs.forEach(s => {
+                const sid = socketsByPhone[s.phone];
+                if (sid) io.to(sid).emit('channel:post:reactions:update', { postId, reactions: reactionList, myPhone: s.phone });
+            });
+        } catch (e) { console.error('channel:post:react', e); }
+    });
+
+    socket.on('channel:post:reactions', async ({ postId }) => {
+        if (!postId) return;
+        try {
+            const reactions = await global.db.all(
+                `SELECT emoji, COUNT(*) as count, GROUP_CONCAT(phone) as phones
+                 FROM channel_post_reactions WHERE postId=? GROUP BY emoji ORDER BY count DESC`,
+                [postId]
+            );
+            socket.emit('channel:post:reactions:list', {
+                postId,
+                reactions: reactions.map(r => ({
+                    emoji: r.emoji, count: r.count,
+                    mine: (r.phones || '').split(',').includes(socket.phone)
+                }))
+            });
+        } catch (e) {}
+    });
+
+    // ── УПРАВЛЕНИЕ КАНАЛОМ (АДМИНЫ) ───────────────────────────────────────────
+    // Список участников канала
+    socket.on('channel:members', async ({ channelId }) => {
+        if (!socket.phone) return;
+        try {
+            const myRole = await global.db.get(
+                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                [channelId, socket.phone]
+            );
+            if (!myRole || !['owner','admin'].includes(myRole.role))
+                return socket.emit('channel:error', 'Нет прав');
+            const members = await global.db.all(
+                `SELECT cs.phone, cs.role, cs.joinedAt, u.nickname, u.avatar, u.status
+                 FROM channel_subscribers cs JOIN users u ON u.phone=cs.phone
+                 WHERE cs.channelId=? ORDER BY
+                   CASE cs.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, cs.joinedAt ASC`,
+                [channelId]
+            );
+            socket.emit('channel:members:list', { channelId, members, myRole: myRole.role });
+        } catch (e) { console.error('channel:members', e); }
+    });
+
+    // Назначить/снять администратора
+    socket.on('channel:admin:set', async ({ channelId, targetPhone, role }) => {
+        if (!socket.phone) return;
+        try {
+            // Только владелец может управлять ролями
+            const myRow = await global.db.get(
+                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                [channelId, socket.phone]
+            );
+            if (!myRow || myRow.role !== 'owner')
+                return socket.emit('channel:error', 'Только владелец может назначать администраторов');
+            // Нельзя изменить роль владельца
+            const targetRow = await global.db.get(
+                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                [channelId, targetPhone]
+            );
+            if (!targetRow) return socket.emit('channel:error', 'Пользователь не является подписчиком');
+            if (targetRow.role === 'owner') return socket.emit('channel:error', 'Нельзя изменить роль владельца');
+
+            const newRole = role === 'admin' ? 'admin' : 'subscriber';
+            await global.db.run(
+                'UPDATE channel_subscribers SET role=? WHERE channelId=? AND phone=?',
+                [newRole, channelId, targetPhone]
+            );
+            // Уведомляем назначенного пользователя
+            const chInfo = await global.db.get('SELECT name FROM channels WHERE id=?', [channelId]);
+            const sid = socketsByPhone[targetPhone];
+            if (sid) io.to(sid).emit('channel:role:changed', {
+                channelId,
+                channelName: chInfo?.name || '',
+                newRole,
+                byPhone: socket.phone,
+                byName: socket.nickname
+            });
+            socket.emit('channel:admin:updated', { channelId, targetPhone, newRole });
+        } catch (e) { console.error('channel:admin:set', e); socket.emit('channel:error', 'Ошибка изменения роли'); }
+    });
+
+    // Исключить участника из канала
+    socket.on('channel:member:kick', async ({ channelId, targetPhone }) => {
+        if (!socket.phone) return;
+        try {
+            const myRow = await global.db.get(
+                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                [channelId, socket.phone]
+            );
+            if (!myRow || !['owner','admin'].includes(myRow.role))
+                return socket.emit('channel:error', 'Нет прав');
+            const targetRow = await global.db.get(
+                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                [channelId, targetPhone]
+            );
+            if (targetRow?.role === 'owner') return socket.emit('channel:error', 'Нельзя исключить владельца');
+            await global.db.run('DELETE FROM channel_subscribers WHERE channelId=? AND phone=?', [channelId, targetPhone]);
+            await global.db.run('UPDATE channels SET subscriberCount=MAX(0,subscriberCount-1) WHERE id=?', [channelId]);
+            // Уведомляем исключённого
+            const sid = socketsByPhone[targetPhone];
+            if (sid) io.to(sid).emit('channel:kicked', { channelId });
+            socket.emit('channel:member:kicked', { channelId, targetPhone });
+        } catch (e) { console.error('channel:member:kick', e); }
+    });
+
+    // Получить/сгенерировать инвайт-ссылку (только для приватных каналов, только для owner/admin)
+    socket.on('channel:invite:get', async ({ channelId }) => {
+        if (!socket.phone) return;
+        try {
+            const myRow = await global.db.get(
+                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                [channelId, socket.phone]
+            );
+            if (!myRow || !['owner','admin'].includes(myRow.role))
+                return socket.emit('channel:error', 'Нет прав');
+            let ch = await global.db.get('SELECT id,name,isPublic,inviteToken FROM channels WHERE id=?', [channelId]);
+            if (!ch) return socket.emit('channel:error', 'Канал не найден');
+            if (!ch.inviteToken) {
+                const token = require('crypto').randomBytes(12).toString('hex');
+                await global.db.run('UPDATE channels SET inviteToken=? WHERE id=?', [token, channelId]);
+                ch.inviteToken = token;
+            }
+            socket.emit('channel:invite:link', { channelId, token: ch.inviteToken });
+        } catch (e) { console.error('channel:invite:get', e); }
+    });
+
+    // Вступить по инвайт-ссылке
+    socket.on('channel:invite:join', async ({ token }) => {
+        if (!socket.phone || !token) return;
+        try {
+            const ch = await global.db.get('SELECT * FROM channels WHERE inviteToken=?', [token]);
+            if (!ch) return socket.emit('channel:error', 'Ссылка недействительна');
+            const existing = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=? AND phone=?', [ch.id, socket.phone]);
+            if (!existing) {
+                await global.db.run('INSERT OR IGNORE INTO channel_subscribers (channelId,phone,role) VALUES (?,?,?)', [ch.id, socket.phone, 'subscriber']);
+                await global.db.run('UPDATE channels SET subscriberCount=subscriberCount+1 WHERE id=?', [ch.id]);
+            }
+            const sub = await global.db.get('SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?', [ch.id, socket.phone]);
+            const subCount = await global.db.get('SELECT COUNT(*) as c FROM channel_subscribers WHERE channelId=?', [ch.id]);
+            socket.emit('channel:invite:joined', { ...ch, myRole: sub.role, subscriberCount: subCount.c });
+        } catch (e) { console.error('channel:invite:join', e); }
+    });
+
+    // ── ЛЕНТА РЕКОМЕНДАЦИЙ ────────────────────────────────────────────────────
+    socket.on('feed:get', async ({ offset } = {}) => {
+        if (!socket.phone) return;
+        try {
+            const off = parseInt(offset) || 0;
+            // Посты из каналов на которые подписан пользователь (уведомления включены или выключены — всё равно в ленте)
+            const myPosts = await global.db.all(
+                `SELECT p.*, c.name as channelName, c.id as channelId, c.avatar as channelAvatar,
+                    cs.notifications as notifEnabled,
+                    (SELECT COUNT(*) FROM channel_comments WHERE postId=p.id) as commentCount
+                 FROM channel_posts p
+                 JOIN channels c ON c.id = p.channelId
+                 JOIN channel_subscribers cs ON cs.channelId = p.channelId AND cs.phone = ?
+                 ORDER BY p.timestamp DESC LIMIT 20 OFFSET ?`,
+                [socket.phone, off]
+            );
+            // Рекомендации: публичные каналы с наибольшим числом подписчиков, на которые НЕ подписан
+            const recommended = await global.db.all(
+                `SELECT c.*, (SELECT COUNT(*) FROM channel_subscribers WHERE channelId=c.id) as subCount,
+                    (SELECT p2.text FROM channel_posts p2 WHERE p2.channelId=c.id ORDER BY p2.timestamp DESC LIMIT 1) as latestPost,
+                    (SELECT p2.timestamp FROM channel_posts p2 WHERE p2.channelId=c.id ORDER BY p2.timestamp DESC LIMIT 1) as latestPostAt
+                 FROM channels c
+                 WHERE c.isPublic=1
+                   AND c.id NOT IN (SELECT channelId FROM channel_subscribers WHERE phone=?)
+                   AND (SELECT COUNT(*) FROM channel_posts WHERE channelId=c.id) > 0
+                 ORDER BY subCount DESC LIMIT 5`,
+                [socket.phone]
+            );
+            socket.emit('feed:data', { posts: myPosts, recommended, offset: off });
+        } catch (e) { console.error('feed:get error:', e.message); socket.emit('feed:data', { posts: [], recommended: [], offset: 0 }); }
+    });
+
+    // ── НАСТРОЙКИ УВЕДОМЛЕНИЙ КАНАЛА ─────────────────────────────────────────
+    socket.on('channel:notifications:set', async ({ channelId, enabled }) => {
+        if (!socket.phone) return;
+        try {
+            await global.db.run(
+                'UPDATE channel_subscribers SET notifications=? WHERE channelId=? AND phone=?',
+                [enabled ? 1 : 0, channelId, socket.phone]
+            );
+            socket.emit('channel:notifications:updated', { channelId, enabled: !!enabled });
+        } catch (e) { console.error('channel:notifications:set error:', e.message); }
+    });
+
+    // Включить/выключить уведомления при получении нового поста
+    // (Переопределяем channel:post:create чтобы учитывать настройки уведомлений)
+    // Уже определён выше — только добавляем отдельное событие channel:notifications:get
+    socket.on('channel:notifications:get', async ({ channelId }) => {
+        if (!socket.phone) return;
+        const row = await global.db.get(
+            'SELECT notifications FROM channel_subscribers WHERE channelId=? AND phone=?',
+            [channelId, socket.phone]
+        );
+        socket.emit('channel:notifications:state', { channelId, enabled: row ? !!row.notifications : true });
     });
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1437,6 +2046,77 @@ io.on('connection', socket => {
         socket.emit('global:search:results', { users, channels });
     });
 
+    socket.on('message:search', async ({ query, chatId }) => {
+        if (!socket.phone || !query?.trim()) return;
+        const q = '%' + query.trim() + '%';
+        let rows;
+        if (chatId) {
+            // Поиск в конкретном чате
+            rows = await global.db.all(
+                `SELECT id,chatId,senderName,text,timestamp FROM messages
+                 WHERE chatId=? AND text LIKE ? ORDER BY timestamp DESC LIMIT 30`,
+                [chatId, q]
+            );
+        } else {
+            // Глобальный поиск по всем чатам пользователя
+            rows = await global.db.all(
+                `SELECT id,chatId,senderName,text,timestamp FROM messages
+                 WHERE (chatId LIKE ? OR chatId IN (SELECT id FROM groups g JOIN group_members gm ON gm.groupId=g.id WHERE gm.phone=?))
+                 AND text LIKE ? ORDER BY timestamp DESC LIMIT 50`,
+                [`%${socket.phone}%`, socket.phone, q]
+            );
+        }
+        socket.emit('message:search:results', { query: query.trim(), results: rows });
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 🤖 АВТООТВЕТ
+    // ══════════════════════════════════════════════════════════════════════
+    socket.on('autoreply:set', async ({ enabled, text }) => {
+        if (!socket.phone) return;
+        await global.db.run(
+            'UPDATE users SET autoReply=?,autoReplyText=? WHERE phone=?',
+            [enabled ? 1 : 0,
+             (text || '').trim().slice(0, 200) || '🤖 Сейчас не в сети. Отвечу позже!',
+             socket.phone]
+        ).catch(()=>{});
+        socket.emit('autoreply:saved', { enabled, text });
+    });
+
+    socket.on('autoreply:get', async () => {
+        if (!socket.phone) return;
+        const u = await global.db.get(
+            'SELECT autoReply,autoReplyText FROM users WHERE phone=?', [socket.phone]
+        ).catch(()=>null);
+        socket.emit('autoreply:data', { enabled: !!u?.autoReply, text: u?.autoReplyText || '' });
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 👁 КТО ПРОЧИТАЛ (группы)
+    // ══════════════════════════════════════════════════════════════════════
+    socket.on('message:read:group', async ({ chatId, messageId }) => {
+        if (!socket.phone || !chatId || !messageId) return;
+        await global.db.run(
+            'INSERT OR IGNORE INTO message_reads (messageId,chatId,readerPhone,readAt) VALUES (?,?,?,?)',
+            [messageId, chatId, socket.phone, ts()]
+        ).catch(()=>{});
+        const readers = await global.db.all(
+            'SELECT readerPhone FROM message_reads WHERE messageId=?', [messageId]
+        ).catch(()=>[]);
+        await emitToChat(chatId, 'message:read:group:update', {
+            messageId, chatId, readers: readers.map(r => r.readerPhone)
+        });
+    });
+
+    socket.on('message:read:who', async ({ messageId }) => {
+        if (!socket.phone) return;
+        const readers = await global.db.all(
+            `SELECT mr.readerPhone, u.nickname FROM message_reads mr
+             JOIN users u ON u.phone=mr.readerPhone WHERE mr.messageId=?`, [messageId]
+        ).catch(()=>[]);
+        socket.emit('message:read:who:result', { messageId, readers });
+    });
+
     // ══════════════════════════════════════════════════════════════════════
     // 💰 КОШЕЛЁК
     // ══════════════════════════════════════════════════════════════════════
@@ -1447,7 +2127,7 @@ io.on('connection', socket => {
             'SELECT * FROM transactions WHERE fromPhone=? OR toPhone=? ORDER BY timestamp DESC LIMIT 50',
             [socket.phone, socket.phone]
         );
-        socket.emit('кошелёк:данные', { balance: user?.balance || 0, transactions: txns });
+        socket.emit('кошелёк:данные', { balance: user?.balance || 0, transactions: txns, hasPin: !!(user?.pin) });
     });
 
     socket.on('кошелёк:установить-пин', async ({ pin }) => {
@@ -1456,6 +2136,21 @@ io.on('connection', socket => {
         const hashed = await bcrypt.hash(String(pin), 10);
         await global.db.run('UPDATE users SET pin=? WHERE phone=?', [hashed, socket.phone]);
         socket.emit('кошелёк:пин-установлен');
+    });
+
+    // Проверка PIN при входе в кошелёк (lock screen)
+    socket.on('кошелёк:проверить-пин', async ({ pin }) => {
+        if (!socket.phone) return;
+        if (!pin || !/^\d{4}$/.test(String(pin))) {
+            return socket.emit('кошелёк:пин-неверный');
+        }
+        const user = await global.db.get('SELECT pin FROM users WHERE phone=?', [socket.phone]);
+        if (!user?.pin) {
+            // PIN не установлен — пропускаем
+            return socket.emit('кошелёк:пин-верный');
+        }
+        const ok = await bcrypt.compare(String(pin), user.pin);
+        socket.emit(ok ? 'кошелёк:пин-верный' : 'кошелёк:пин-неверный');
     });
 
     socket.on('wallet:transfer', async ({ toPhone, amount, comment, pin }) => {
@@ -1499,7 +2194,33 @@ io.on('connection', socket => {
             await global.db.run('INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp) VALUES (?,?,?,?,?,?)',
                 [sysId, chatId, 'system', 'БАЗА Кошелёк', sysText, txTs]);
             await emitToChat(chatId, 'message:receive', { chatId, message: { id: sysId, chatId, senderPhone: 'system', senderName: 'БАЗА Кошелёк', text: sysText, timestamp: txTs, reactions: [], isRead: 0, isEdited: 0, replyTo: null } });
+
+            await auditLog({
+                actorPhone: socket.phone,
+                actorType: 'user',
+                action: 'wallet.transfer',
+                targetPhone: toPhone,
+                severity: 'info',
+                meta: { amount: amt, comment: comment || '' },
+            });
         } catch (e) { console.error('wallet:transfer:', e.message); socket.emit('кошелёк:ошибка', 'Ошибка: ' + e.message); }
+    });
+
+    // Проверка PIN для lock screen кошелька
+    socket.on('кошелёк:проверить-пин', async ({ pin }, callback) => {
+        if (!socket.phone) return;
+        try {
+            const user = await global.db.get('SELECT pin FROM users WHERE phone=?', [socket.phone]);
+            if (!user?.pin) {
+                if (callback) callback({ ok: false, error: 'PIN не установлен' });
+                return;
+            }
+            const ok = await bcrypt.compare(String(pin), user.pin);
+            if (callback) callback({ ok });
+            if (!ok) socket.emit('кошелёк:ошибка', 'Неверный PIN-код');
+        } catch(e) {
+            if (callback) callback({ ok: false });
+        }
     });
 
     socket.on('кошелёк:пополнить', async ({ amount }) => {
@@ -1511,6 +2232,71 @@ io.on('connection', socket => {
             ['tx_' + uid(), 'system', socket.phone, amt, 'Пополнение (демо)', 'topup', 'completed', ts()]);
         const u = await global.db.get('SELECT balance FROM users WHERE phone=?', [socket.phone]);
         socket.emit('кошелёк:пополнено', { amount: amt, newBalance: u.balance });
+
+        await auditLog({
+            actorPhone: socket.phone,
+            actorType: 'user',
+            action: 'wallet.topup_demo',
+            targetPhone: socket.phone,
+            severity: 'info',
+            meta: { amount: amt },
+        });
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // ⭐ PREMIUM — покупка через баланс (демо)
+    // ══════════════════════════════════════════════════════════════════════
+    const PREMIUM_PLANS = [
+        { id: 'premium_month',  title: 'Premium · 30 дней',  days: 30,  price: 199 },
+        { id: 'premium_year',   title: 'Premium · 365 дней', days: 365, price: 1490 },
+    ];
+
+    socket.on('premium:plans', async () => {
+        socket.emit('premium:plans:result', { plans: PREMIUM_PLANS });
+    });
+
+    socket.on('premium:buy', async ({ planId, pin }) => {
+        if (!socket.phone) return;
+        try {
+            const plan = PREMIUM_PLANS.find(p => p.id === planId) || PREMIUM_PLANS[0];
+            const sender = await global.db.get('SELECT balance,pin,nickname,isPremium,premiumUntil FROM users WHERE phone=?', [socket.phone]);
+            if (!sender) return socket.emit('premium:error', 'Пользователь не найден');
+            if (!sender.pin) return socket.emit('premium:error', 'Сначала установите ПИН-код кошелька');
+            if (!pin) return socket.emit('premium:pin_required', { planId: plan.id, price: plan.price });
+            if (!await bcrypt.compare(String(pin), sender.pin)) return socket.emit('premium:error', 'Неверный ПИН-код');
+            if ((sender.balance || 0) < plan.price) return socket.emit('premium:error', 'Недостаточно средств');
+
+            const now = Date.now();
+            const curExp = sender.premiumUntil ? Date.parse(sender.premiumUntil) : NaN;
+            const base = (!Number.isNaN(curExp) && curExp > now) ? curExp : now;
+            const newExp = new Date(base + plan.days * 24 * 60 * 60 * 1000).toISOString();
+
+            const orderTs = ts();
+            await global.db.transaction(async tx => {
+                await tx.run('UPDATE users SET balance=balance-? WHERE phone=?', [plan.price, socket.phone]);
+                await tx.run('UPDATE users SET isPremium=1, premiumUntil=? WHERE phone=?', [newExp, socket.phone]);
+                await tx.run(
+                    'INSERT INTO transactions (id,fromPhone,toPhone,amount,comment,type,status,timestamp) VALUES (?,?,?,?,?,?,?,?)',
+                    ['tx_' + uid(), socket.phone, 'system', plan.price, `Premium: ${plan.title}`, 'subscription', 'completed', orderTs]
+                );
+            });
+
+            socket.isPremium = 1;
+            socket.emit('premium:buy:ok', { isPremium: 1, premiumUntil: newExp, plan });
+            socket.emit('premium:status', { isPremium: 1, plan: { id: plan.id, title: plan.title, premiumUntil: newExp } });
+
+            await auditLog({
+                actorPhone: socket.phone,
+                actorType: 'user',
+                action: 'premium.buy',
+                targetPhone: socket.phone,
+                severity: 'info',
+                meta: { planId: plan.id, price: plan.price, premiumUntil: newExp },
+            });
+        } catch (e) {
+            console.error('premium:buy:', e.message);
+            socket.emit('premium:error', 'Ошибка покупки: ' + e.message);
+        }
     });
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1610,6 +2396,9 @@ io.on('connection', socket => {
     // ══════════════════════════════════════════════════════════════════════
     // DISCONNECT
     // ══════════════════════════════════════════════════════════════════════
+    // 🤖 Боты
+    attachBotHandlers(socket);
+
     socket.on('disconnect', async () => {
         if (!socket.phone) return;
         delete socketsByPhone[socket.phone];
@@ -1638,6 +2427,291 @@ io.on('connection', socket => {
     });
 });
 
+
+// ════════════════════════════════════════════════════════════════════════════════
+// 🤖 СИСТЕМА БОТОВ И МИНИ-АППОВ
+// ════════════════════════════════════════════════════════════════════════════════
+//
+// Бот — специальный аккаунт с токеном, отвечает на сообщения через Webhook или
+// через Long Polling (сервер сам опрашивает handler URL).
+//
+// Mini App — HTML страница, открывается поверх чата в iframe.
+// Получает контекст пользователя через postMessage, может отправлять сообщения.
+//
+// ── Таблицы БД ────────────────────────────────────────────────────────────────
+// bots(id, name, username, ownerId, token, avatarEmoji, description,
+//      webhookUrl, isActive, miniAppUrl, miniAppTitle, createdAt)
+// bot_commands(id, botId, command, description)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const crypto = require('crypto');
+
+// Убедимся что таблицы ботов существуют
+async function ensureBotTables() {
+    await global.db.run(`CREATE TABLE IF NOT EXISTS bots (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        username    TEXT NOT NULL UNIQUE,
+        ownerId     TEXT NOT NULL,
+        token       TEXT NOT NULL UNIQUE,
+        avatarEmoji TEXT DEFAULT '🤖',
+        description TEXT DEFAULT '',
+        webhookUrl  TEXT DEFAULT '',
+        isActive    INTEGER DEFAULT 1,
+        miniAppUrl  TEXT DEFAULT '',
+        miniAppTitle TEXT DEFAULT '',
+        createdAt   TEXT NOT NULL
+    )`);
+    await global.db.run(`CREATE TABLE IF NOT EXISTS bot_commands (
+        id          TEXT PRIMARY KEY,
+        botId       TEXT NOT NULL,
+        command     TEXT NOT NULL,
+        description TEXT DEFAULT ''
+    )`);
+}
+
+// Инициализируем при старте
+ensureBotTables().catch(e => console.error('bot tables error:', e.message));
+
+// ── HTTP API для ботов (аналог Telegram Bot API) ──────────────────────────────
+
+// GET /api/bot/:token/getMe — информация о боте
+app.get('/api/bot/:token/getMe', async (req, res) => {
+    const bot = await global.db.get('SELECT * FROM bots WHERE token=? AND isActive=1', [req.params.token]);
+    if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
+    res.json({ ok: true, result: {
+        id: bot.id, name: bot.name, username: bot.username,
+        description: bot.description, avatarEmoji: bot.avatarEmoji
+    }});
+});
+
+// POST /api/bot/:token/sendMessage — бот отправляет сообщение
+app.post('/api/bot/:token/sendMessage', async (req, res) => {
+    const bot = await global.db.get('SELECT * FROM bots WHERE token=? AND isActive=1', [req.params.token]);
+    if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
+
+    const { chat_id, text, reply_to_message_id } = req.body;
+    if (!chat_id || !text) return res.status(400).json({ ok: false, error: 'chat_id and text required' });
+
+    const msgId = 'msg_' + uid();
+    const now   = ts();
+
+    await global.db.run(
+        'INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp,replyTo) VALUES (?,?,?,?,?,?,?)',
+        [msgId, chat_id, bot.id, bot.name, text, now, reply_to_message_id || null]
+    );
+
+    const msgObj = {
+        id: msgId, chatId: chat_id,
+        senderPhone: bot.id, senderName: bot.name,
+        text, timestamp: now,
+        replyTo: reply_to_message_id || null,
+        isBot: true, botAvatarEmoji: bot.avatarEmoji
+    };
+    await emitToChat(chat_id, 'message:new', msgObj);
+    res.json({ ok: true, result: msgObj });
+});
+
+// POST /api/bot/:token/setWebhook — установить URL для уведомлений
+app.post('/api/bot/:token/setWebhook', async (req, res) => {
+    const bot = await global.db.get('SELECT id FROM bots WHERE token=?', [req.params.token]);
+    if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
+    const { url } = req.body;
+    await global.db.run('UPDATE bots SET webhookUrl=? WHERE id=?', [url || '', bot.id]);
+    res.json({ ok: true, description: url ? 'Webhook set' : 'Webhook removed' });
+});
+
+// GET /api/bot/:token/getCommands — список команд
+app.get('/api/bot/:token/getCommands', async (req, res) => {
+    const bot = await global.db.get('SELECT id FROM bots WHERE token=?', [req.params.token]);
+    if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
+    const cmds = await global.db.all('SELECT command,description FROM bot_commands WHERE botId=?', [bot.id]);
+    res.json({ ok: true, result: cmds });
+});
+
+// POST /api/bot/:token/setCommands — установить команды
+app.post('/api/bot/:token/setCommands', async (req, res) => {
+    const bot = await global.db.get('SELECT id FROM bots WHERE token=?', [req.params.token]);
+    if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
+    const { commands } = req.body; // [{command, description}]
+    if (!Array.isArray(commands)) return res.status(400).json({ ok: false, error: 'commands must be array' });
+    await global.db.run('DELETE FROM bot_commands WHERE botId=?', [bot.id]);
+    for (const cmd of commands.slice(0, 50)) {
+        if (cmd.command) await global.db.run(
+            'INSERT INTO bot_commands (id,botId,command,description) VALUES (?,?,?,?)',
+            [uid(), bot.id, cmd.command.replace(/^\//, ''), cmd.description || '']
+        );
+    }
+    res.json({ ok: true });
+});
+
+// ── Mini App: отдаём HTML по URL ──────────────────────────────────────────────
+// GET /miniapp/:botId — открывает miniAppUrl в iframe (проксируем или редиректим)
+app.get('/miniapp/:botId', async (req, res) => {
+    const bot = await global.db.get('SELECT miniAppUrl,miniAppTitle,name FROM bots WHERE id=?', [req.params.botId]);
+    if (!bot?.miniAppUrl) return res.status(404).send('Mini App не найден');
+    // Редирект на внешний URL или отдаём встроенную страницу
+    if (bot.miniAppUrl.startsWith('http')) {
+        return res.redirect(bot.miniAppUrl);
+    }
+    res.redirect(bot.miniAppUrl);
+});
+
+// ── Socket.IO события для управления ботами ──────────────────────────────────
+// Добавляем в основной io.on('connection') через отдельный обработчик
+const _botHandlers = new Map(); // socket.id → handlers
+
+function attachBotHandlers(socket) {
+
+    // Создать бота
+    socket.on('bot:create', async ({ name, username, avatarEmoji, description }) => {
+        if (!socket.phone) return;
+        if (!name?.trim() || !username?.trim())
+            return socket.emit('bot:error', 'Введите имя и username');
+
+        const cleanUsername = username.trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+        if (cleanUsername.length < 3)
+            return socket.emit('bot:error', 'Username минимум 3 символа (a-z, 0-9, _)');
+
+        const exists = await global.db.get('SELECT 1 FROM bots WHERE username=?', [cleanUsername]);
+        if (exists) return socket.emit('bot:error', 'Username уже занят');
+
+        const id    = 'bot_' + uid();
+        const token = crypto.randomBytes(24).toString('hex'); // 48-символьный токен
+
+        await global.db.run(
+            'INSERT INTO bots (id,name,username,ownerId,token,avatarEmoji,description,createdAt) VALUES (?,?,?,?,?,?,?,?)',
+            [id, name.trim(), cleanUsername, socket.phone, token, avatarEmoji || '🤖', description || '', ts()]
+        );
+
+        socket.emit('bot:created', {
+            id, name: name.trim(), username: cleanUsername,
+            token, avatarEmoji: avatarEmoji || '🤖', description: description || '',
+            webhookUrl: '', miniAppUrl: '', miniAppTitle: '', isActive: 1
+        });
+    });
+
+    // Список моих ботов
+    socket.on('bot:list', async () => {
+        if (!socket.phone) return;
+        const bots = await global.db.all(
+            'SELECT id,name,username,avatarEmoji,description,webhookUrl,miniAppUrl,miniAppTitle,isActive,createdAt FROM bots WHERE ownerId=? ORDER BY createdAt DESC',
+            [socket.phone]
+        );
+        // Для каждого бота добавляем команды
+        for (const bot of bots) {
+            bot.commands = await global.db.all('SELECT command,description FROM bot_commands WHERE botId=?', [bot.id]);
+        }
+        socket.emit('bot:list', bots);
+    });
+
+    // Получить токен бота (только владелец)
+    socket.on('bot:token', async ({ botId }) => {
+        if (!socket.phone) return;
+        const bot = await global.db.get('SELECT token FROM bots WHERE id=? AND ownerId=?', [botId, socket.phone]);
+        if (!bot) return socket.emit('bot:error', 'Бот не найден');
+        socket.emit('bot:token', { botId, token: bot.token });
+    });
+
+    // Обновить бота
+    socket.on('bot:update', async ({ botId, name, avatarEmoji, description, webhookUrl, miniAppUrl, miniAppTitle }) => {
+        if (!socket.phone) return;
+        const bot = await global.db.get('SELECT id FROM bots WHERE id=? AND ownerId=?', [botId, socket.phone]);
+        if (!bot) return socket.emit('bot:error', 'Бот не найден');
+        await global.db.run(
+            'UPDATE bots SET name=COALESCE(?,name), avatarEmoji=COALESCE(?,avatarEmoji), description=COALESCE(?,description), webhookUrl=COALESCE(?,webhookUrl), miniAppUrl=COALESCE(?,miniAppUrl), miniAppTitle=COALESCE(?,miniAppTitle) WHERE id=?',
+            [name||null, avatarEmoji||null, description||null, webhookUrl||null, miniAppUrl||null, miniAppTitle||null, botId]
+        );
+        const updated = await global.db.get('SELECT id,name,username,avatarEmoji,description,webhookUrl,miniAppUrl,miniAppTitle,isActive FROM bots WHERE id=?', [botId]);
+        socket.emit('bot:updated', updated);
+    });
+
+    // Удалить бота
+    socket.on('bot:delete', async ({ botId }) => {
+        if (!socket.phone) return;
+        const bot = await global.db.get('SELECT 1 FROM bots WHERE id=? AND ownerId=?', [botId, socket.phone]);
+        if (!bot) return socket.emit('bot:error', 'Бот не найден');
+        await global.db.run('DELETE FROM bot_commands WHERE botId=?', [botId]);
+        await global.db.run('DELETE FROM bots WHERE id=?', [botId]);
+        socket.emit('bot:deleted', { botId });
+    });
+
+    // Регенерировать токен
+    socket.on('bot:regen_token', async ({ botId }) => {
+        if (!socket.phone) return;
+        const bot = await global.db.get('SELECT 1 FROM bots WHERE id=? AND ownerId=?', [botId, socket.phone]);
+        if (!bot) return socket.emit('bot:error', 'Бот не найден');
+        const newToken = crypto.randomBytes(24).toString('hex');
+        await global.db.run('UPDATE bots SET token=? WHERE id=?', [newToken, botId]);
+        socket.emit('bot:token', { botId, token: newToken });
+    });
+
+    // Добавить бота в чат (написать боту)
+    socket.on('bot:open_chat', async ({ botUsername }) => {
+        if (!socket.phone) return;
+        const bot = await global.db.get('SELECT id,name,avatarEmoji FROM bots WHERE username=? AND isActive=1', [botUsername.toLowerCase()]);
+        if (!bot) return socket.emit('bot:error', 'Бот не найден: @' + botUsername);
+        // Создаём или открываем личный чат с ботом
+        const chatId = [socket.phone, bot.id].sort().join('_');
+        socket.emit('bot:chat_opened', { chatId, botId: bot.id, botName: bot.name, botAvatarEmoji: bot.avatarEmoji });
+    });
+}
+
+// ── Webhook: отправить обновление на URL бота ─────────────────────────────────
+async function sendWebhook(bot, update) {
+    if (!bot.webhookUrl) return;
+    try {
+        await axios.post(bot.webhookUrl, update, {
+            timeout: 10000,
+            headers: { 'Content-Type': 'application/json' }
+        });
+    } catch (e) {
+        console.warn(`⚠️  Webhook [${bot.username}] failed: ${e.message}`);
+    }
+}
+
+// ── Перехват входящих сообщений для ботов ─────────────────────────────────────
+// Когда пользователь пишет в чат, проверяем — бот ли получатель?
+async function tryRouteToBot(chatId, senderPhone, senderName, text) {
+    if (!text || !chatId) return;
+    // chatId формата "phone_bot_xxx" — один из участников бот
+    const parts = chatId.split('_');
+    let botId = null;
+    for (const part of parts) {
+        if (part.startsWith('bot')) {
+            // Проверяем есть ли такой бот
+            const b = await global.db.get('SELECT * FROM bots WHERE id LIKE ? AND isActive=1', ['%' + part + '%']);
+            if (b) { botId = b.id; break; }
+        }
+    }
+    // Также ищем бота по полному chatId
+    const fullChatParts = chatId.split('_');
+    for (const p of fullChatParts) {
+        const candidate = fullChatParts.slice(fullChatParts.indexOf(p)).join('_');
+        const b = await global.db.get('SELECT * FROM bots WHERE id=? AND isActive=1', [candidate]);
+        if (b) { botId = b.id; break; }
+    }
+
+    if (!botId) return;
+    const bot = await global.db.get('SELECT * FROM bots WHERE id=?', [botId]);
+    if (!bot) return;
+
+    // Формируем объект обновления (как Telegram Update)
+    const update = {
+        update_id: Date.now(),
+        message: {
+            message_id: uid(),
+            from: { phone: senderPhone, name: senderName },
+            chat: { id: chatId },
+            text,
+            date: Math.floor(Date.now() / 1000)
+        }
+    };
+
+    // Шлём на Webhook если настроен
+    await sendWebhook(bot, update);
+}
+
 // ── Глобальный обработчик ошибок Express ────────────────────────────────────
 // Ловит любой крашнувший маршрут и всегда возвращает JSON (не пустое тело)
 app.use((err, req, res, next) => {
@@ -1656,5 +2730,5 @@ app.use((req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 БАЗА v6.0 Super App → http://localhost:${PORT} [${IS_PG ? 'PostgreSQL' : 'SQLite'}] [PID:${process.pid}]`);
+    console.log(`🚀 БАЗА v1.0 Alpha → http://localhost:${PORT} [${IS_PG ? 'PostgreSQL' : 'SQLite'}] [PID:${process.pid}]`);
 });

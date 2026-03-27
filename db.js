@@ -39,6 +39,7 @@ async function initDb() {
             role             TEXT DEFAULT 'user',
             isBanned         INTEGER DEFAULT 0,
             isPremium        INTEGER DEFAULT 0,
+            premiumUntil     TEXT,
             balance          REAL    DEFAULT 0.0,
             pin              TEXT
         );
@@ -109,6 +110,19 @@ async function initDb() {
             response  TEXT,
             model     TEXT,
             timestamp TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id          TEXT PRIMARY KEY,
+            actorPhone  TEXT,
+            actorType   TEXT DEFAULT 'user',
+            action      TEXT NOT NULL,
+            targetPhone TEXT,
+            severity    TEXT DEFAULT 'info',
+            meta        TEXT,
+            ip          TEXT,
+            userAgent   TEXT,
+            timestamp   TEXT NOT NULL
         );
     `);
 
@@ -219,6 +233,7 @@ async function initDb() {
         "ALTER TABLE users ADD COLUMN isVerified       INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN verificationCode TEXT",
         "ALTER TABLE users ADD COLUMN isPremium        INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN premiumUntil     TEXT",
         "ALTER TABLE users ADD COLUMN balance          REAL    DEFAULT 0.0",
         "ALTER TABLE users ADD COLUMN pin              TEXT",
         "ALTER TABLE messages ADD COLUMN isRead        INTEGER DEFAULT 0",
