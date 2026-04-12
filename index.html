@@ -1341,6 +1341,74 @@
           this.$('#verificationForm').classList.remove('hidden');
         });
 
+        // Verification events
+        this.state.socket.on('verify:success', (data) => {
+          this._notify('Email подтверждён!', 'success');
+          this.$('#verificationForm').classList.add('hidden');
+          this.$('#loginForm').classList.remove('hidden');
+          this.$('.auth-tab[data-tab="login"]').classList.add('active');
+          this.$('.auth-tab[data-tab="register"]').classList.remove('active');
+        });
+        this.state.socket.on('verify:error', (error) => this._notify(error, 'error'));
+        this.state.socket.on('verify:resent', (data) => {
+          if (data.sent) {
+            this._notify('Код отправлен на ' + data.email, 'success');
+          } else {
+            this._notify('Ошибка отправки кода', 'error');
+          }
+        });
+
+        // Password reset events
+        this.state.socket.on('password:forgot:sent', (data) => {
+          const msg = this.$('#forgotPasswordMessage');
+          msg.classList.remove('hidden');
+          if (data.emailSent) {
+            msg.className = 'alert alert-success';
+            msg.innerHTML = '✅ Ссылка для сброса пароля отправлена на ваш email';
+          } else {
+            msg.className = 'alert alert-warning';
+            msg.innerHTML = '⚠️ Email не отправлен (SMTP не настроен). Код будет показан в консоли сервера.';
+          }
+          setTimeout(() => this.closeForgotPasswordModal(), 3000);
+        });
+        this.state.socket.on('password:forgot:error', (error) => {
+          const msg = this.$('#forgotPasswordMessage');
+          msg.classList.remove('hidden');
+          msg.className = 'alert alert-error';
+          msg.textContent = error;
+        });
+        this.state.socket.on('password:reset:success', (data) => {
+          this._notify('Пароль успешно изменён!', 'success');
+          this._closeModal('resetPasswordModal');
+          this.$('#loginForm').classList.remove('hidden');
+        });
+        this.state.socket.on('password:reset:error', (error) => {
+          const msg = this.$('#resetPasswordMessage');
+          if (msg) {
+            msg.classList.remove('hidden');
+            msg.className = 'alert alert-error';
+            msg.textContent = error;
+          } else {
+            this._notify(error, 'error');
+          }
+        });
+        this.state.socket.on('password:token:valid', (data) => {
+          this.state.resetPhone = data.phone;
+          this.$('#resetPasswordMessage')?.classList.add('hidden');
+        });
+        this.state.socket.on('password:token:invalid', () => {
+          this._notify('Неверная или устаревшая ссылка', 'error');
+          window.location.href = '/';
+        });
+        this.state.socket.on('password:token:used', () => {
+          this._notify('Эта ссылка уже была использована', 'error');
+          window.location.href = '/';
+        });
+        this.state.socket.on('password:token:expired', () => {
+          this._notify('Срок действия ссылки истёк', 'error');
+          window.location.href = '/';
+        });
+
         // Message events
         this.state.socket.on('message:receive', async (data) => {
           if (this.state.currentChat === data.chatId) {
