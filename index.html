@@ -664,6 +664,9 @@
           <label class="form-label">Пароль</label>
           <input type="password" class="form-input" id="loginPassword" placeholder="••••••••" required minlength="6" />
         </div>
+        <div style="text-align:right;margin-bottom:16px;">
+          <a href="#" id="forgotPasswordLink" style="color:#8b8fa8;font-size:13px;text-decoration:none;">Забыли пароль?</a>
+        </div>
         <button type="submit" class="btn" id="loginBtn">
           <i class="fas fa-arrow-right-to-bracket"></i> Войти
         </button>
@@ -1077,6 +1080,37 @@
     </div>
   </div>
 
+  <!-- MODAL: ВОССТАНОВЛЕНИЕ ПАРОЛЯ -->
+  <div class="modal-overlay" id="forgotPasswordModal">
+    <div class="modal" style="max-width:420px">
+      <div class="modal-header">
+        <div class="modal-title">🔑 Восстановление пароля</div>
+        <button class="modal-close" onclick="App.closeForgotPasswordModal()"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted text-sm" style="margin-bottom:16px">
+          Введите номер телефона, привязанный к вашему аккаунту. Мы отправим ссылку для сброса пароля на ваш email.
+        </p>
+        <div id="forgotPasswordMessage" class="alert hidden" style="margin-bottom:16px"></div>
+        <div class="form-group">
+          <label class="form-label">Номер телефона</label>
+          <div class="phone-input">
+            <select class="form-input phone-code" id="forgotCountry" style="width:100px">
+              <option value="+7">🇷🇺 +7</option>
+              <option value="+1">🇺🇸 +1</option>
+              <option value="+44">🇬🇧 +44</option>
+              <option value="+49">🇩🇪 +49</option>
+            </select>
+            <input type="tel" class="form-input" id="forgotPhone" placeholder="999 123-45-67" style="flex:1" />
+          </div>
+        </div>
+        <button class="btn btn-primary" id="sendResetLinkBtn" onclick="App.sendResetLink()" style="width:100%;margin-top:12px">
+          Отправить ссылку
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- CONTEXT MENU -->
   <div class="context-menu" id="messageContextMenu">
     <div class="context-item" data-action="reply"><i class="fas fa-reply"></i> Ответить</div>
@@ -1450,6 +1484,12 @@
           this.state.socket.emit('auth', { phone, password });
         });
 
+        // Forgot Password Link
+        this.$('#forgotPasswordLink').addEventListener('click', (e) => {
+          e.preventDefault();
+          this._openModal('forgotPasswordModal');
+        });
+
         // Register
         this.$('#registerForm').addEventListener('submit', async (e) => {
           e.preventDefault();
@@ -1513,6 +1553,54 @@
         this.$('#newChatBtn').addEventListener('click', () => this._openModal('newChatModal'));
         this.$('#closeNewChat').addEventListener('click', () => this._closeModal('newChatModal'));
         this.$('#cancelNewChat').addEventListener('click', () => this._closeModal('newChatModal'));
+        
+        // Поиск контактов
+        const searchContactInput = this.$('#searchContact');
+        let searchTimeout = null;
+        if (searchContactInput) {
+          searchContactInput.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            const query = e.target.value.trim();
+            if (query.length < 1) {
+              this.$('#searchResults').classList.add('hidden');
+              this.$('#searchEmpty').classList.remove('hidden');
+              return;
+            }
+            searchTimeout = setTimeout(() => {
+              this.state.socket.emit('contact:search', query);
+            }, 300);
+          });
+        }
+        
+        // Обработка результатов поиска контактов
+        this.state.socket.on('contact:search:results', (results) => {
+          const resultsDiv = this.$('#searchResults');
+          const emptyDiv = this.$('#searchEmpty');
+          if (!resultsDiv || !emptyDiv) return;
+          
+          if (!results || results.length === 0) {
+            resultsDiv.classList.add('hidden');
+            emptyDiv.textContent = 'Пользователи не найдены';
+            emptyDiv.classList.remove('hidden');
+            return;
+          }
+          
+          emptyDiv.classList.add('hidden');
+          resultsDiv.classList.remove('hidden');
+          resultsDiv.innerHTML = results.map(u => `
+            <div style="display:flex;align-items:center;gap:12px;padding:10px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer" 
+                 onclick="window.__app?._startChatWithUser('${u.phone}', '${u.nickname.replace(/'/g, "\\'")}')">
+              <div style="width:40;height:40;border-radius:50%;background:var(--acg);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--ac)">
+                ${(u.nickname || u.phone).charAt(0).toUpperCase()}
+              </div>
+              <div style="flex:1">
+                <div style="font-weight:600">${this._escapeHtml(u.nickname || 'Без имени')}</div>
+                <div class="text-muted text-sm">${this._escapeHtml(u.phone)}</div>
+              </div>
+              <button class="btn" style="width:auto;padding:8px 14px;font-size:12px">Написать</button>
+            </div>
+          `).join('');
+        });
 
         // Theme toggle
         this.$('#themeToggle').addEventListener('click', () => {
