@@ -15,6 +15,7 @@
   "type": "commonjs",
   "dependencies": {
     "@mistralai/mistralai": "^1.14.1",
+    "argon2": "^0.41.0",
     "axios": "^1.13.6",
     "bcrypt": "^6.0.0",
     "dotenv": "^17.3.1",

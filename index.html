@@ -696,8 +696,8 @@
           <input type="password" class="form-input" id="regPassword" placeholder="Минимум 6 символов" required minlength="6" />
         </div>
         <div class="form-group">
-          <label class="form-label">Email <span style="color:var(--tx3);font-weight:400">(опционально)</span></label>
-          <input type="email" class="form-input" id="regEmail" placeholder="email@example.com" />
+          <label class="form-label">Email <span style="color:var(--err);font-weight:600">*</span></label>
+          <input type="email" class="form-input" id="regEmail" placeholder="email@example.com" required />
         </div>
         <button type="submit" class="btn" id="regBtn">
           <i class="fas fa-user-plus"></i> Создать аккаунт
@@ -948,6 +948,9 @@
             <input type="password" class="code-digit" maxlength="1" pattern="[0-9]" inputmode="numeric" />
           </div>
           <p style="color:var(--err);font-size:12px;display:none" id="walletPinError">Неверный ПИН-код</p>
+          <button class="btn btn-ghost" id="biometricBtn" style="margin-top:16px;width:auto;padding:10px 20px">
+            <i class="fas fa-fingerprint"></i> Войти по биометрии
+          </button>
         </div>
 
         <div id="walletContent" class="hidden">
@@ -1565,7 +1568,8 @@
           const nickname = this.$('#regNickname').value.trim();
           const password = this.$('#regPassword').value;
           const email = this.$('#regEmail').value.trim().toLowerCase();
-          if (!phone || !nickname || !password) return this._notify('Заполните обязательные поля', 'error');
+          if (!phone || !nickname || !password || !email) return this._notify('Заполните все обязательные поля', 'error');
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return this._notify('Введите корректный email', 'error');
           this.$('#regBtn').disabled = true;
           this.state.socket.emit('register', { phone, nickname, password, email });
         });
@@ -1693,9 +1697,15 @@
           this.$('#walletContent').classList.add('hidden');
           this.$('#walletPinError').style.display = 'none';
           Array.from(this.$$('#walletPinInput .code-digit')).forEach(i => i.value = '');
+          this._checkBiometricAvailability();
           this._openModal('walletModal');
         });
         this.$('#closeWallet').addEventListener('click', () => this._closeModal('walletModal'));
+        
+        // Biometric login
+        this.$('#biometricBtn').addEventListener('click', async () => {
+          await this._authenticateWithBiometrics();
+        });
 
         // Set wallet PIN
         this.$('#setWalletPin').addEventListener('click', () => {

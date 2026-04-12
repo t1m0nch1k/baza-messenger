@@ -982,26 +982,22 @@ io.on('connection', socket => {
         try {
             const p = (phone || '').trim();
             const e = (email || '').trim().toLowerCase();
-            if (!p || !nickname || !password) return socket.emit('register:error', 'Заполните все поля');
+            if (!p || !nickname || !password || !e) return socket.emit('register:error', 'Email обязателен для регистрации');
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return socket.emit('register:error', 'Некорректный формат email');
             if (await global.db.get('SELECT 1 FROM users WHERE phone=?', [p]))
                 return socket.emit('register:error', 'Этот номер уже занят!');
-            if (e && await global.db.get('SELECT 1 FROM users WHERE email=?', [e]))
+            if (await global.db.get('SELECT 1 FROM users WHERE email=?', [e]))
                 return socket.emit('register:error', 'Email уже используется!');
 
             const code = genCode();
             await global.db.run(
                 'INSERT INTO users (phone,nickname,passwordHash,avatar,status,email,isVerified,verificationCode,isPremium,balance) VALUES (?,?,?,?,?,?,?,?,0,0.0)',
-                [p, nickname, await bcrypt.hash(password, 10), generateAvatar(nickname), 'offline', e || null, 0, code]
+                [p, nickname, await bcrypt.hash(password, 10), generateAvatar(nickname), 'offline', e, 0, code]
             );
             console.log(`\n🔑 КОД ВЕРИФИКАЦИИ для ${p}: ${code}\n`);
 
-            if (e) {
-                const sent = await sendVerificationEmail(e, code);
-                socket.emit('register:needs_verification', { phone: p, email: e, emailFailed: !sent });
-            } else {
-                await global.db.run('UPDATE users SET isVerified=1 WHERE phone=?', [p]);
-                socket.emit('register:success', { phone: p });
-            }
+            const sent = await sendVerificationEmail(e, code);
+            socket.emit('register:needs_verification', { phone: p, email: e, emailFailed: !sent });
         } catch (err) { console.error(err); socket.emit('register:error', 'Ошибка сервера'); }
     });
 
