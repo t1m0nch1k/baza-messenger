@@ -1,28 +1,37 @@
 'use strict';
 /**
- * db.js — SQLite адаптер для BAZA v6.0
+ * db.js — PostgreSQL адаптер для BAZA v6.0
  * Автоматически создаёт все таблицы и добавляет недостающие колонки.
  */
 
-const path    = require('path');
-const sqlite3 = require('sqlite3').verbose();
-const { open } = require('sqlite');
+const { Pool } = require('pg');
 
-const IS_PG = false;
+const IS_PG = true;
+
+let pool;
 
 async function initDb() {
-    const dbPath = process.env.SQLITE_PATH || path.join(__dirname, 'baza.db');
+    const connectionString = process.env.DATABASE_URL || 
+        `postgres://${process.env.DB_USER || 'postgres'}:${process.env.DB_PASSWORD || 'postgres'}@${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || '5432'}/${process.env.DB_NAME || 'baza'}`;
 
-    const db = await open({ filename: dbPath, driver: sqlite3.Database });
+    pool = new Pool({
+        connectionString,
+        max: 20,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 2000,
+    });
 
-    await db.exec('PRAGMA journal_mode = WAL');
-    await db.exec('PRAGMA synchronous  = NORMAL');
-    await db.exec('PRAGMA cache_size   = -32000');
-    await db.exec('PRAGMA temp_store   = MEMORY');
-    await db.exec('PRAGMA foreign_keys = ON');
+    // Проверка подключения
+    const client = await pool.connect();
+    try {
+        await client.query('SELECT NOW()');
+        console.log(`✅ BAZA DB готова → PostgreSQL`);
+    } finally {
+        client.release();
+    }
 
     // ── CORE TABLES ──────────────────────────────────────────────────────────
-    await db.exec(`
+    await pool.query(`
         CREATE TABLE IF NOT EXISTS users (
             phone            TEXT PRIMARY KEY,
             nickname         TEXT NOT NULL,
@@ -32,15 +41,15 @@ async function initDb() {
             status           TEXT DEFAULT 'offline',
             lastSeen         TEXT,
             bio              TEXT DEFAULT '',
-            createdAt        TEXT DEFAULT CURRENT_TIMESTAMP,
+            createdAt        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             email            TEXT,
-            isVerified       INTEGER DEFAULT 0,
+            isVerified       BOOLEAN DEFAULT FALSE,
             verificationCode TEXT,
             role             TEXT DEFAULT 'user',
-            isBanned         INTEGER DEFAULT 0,
-            isPremium        INTEGER DEFAULT 0,
-            premiumUntil     TEXT,
-            balance          REAL    DEFAULT 0.0,
+            isBanned         BOOLEAN DEFAULT FALSE,
+            isPremium        BOOLEAN DEFAULT FALSE,
+            premiumUntil     TIMESTAMPTZ,
+            balance          NUMERIC    DEFAULT 0.0,
             pin              TEXT
         );
         CREATE TABLE IF NOT EXISTS messages (
@@ -53,15 +62,15 @@ async function initDb() {
             audioUrl    TEXT,
             videoUrl    TEXT,
             duration    REAL,
-            timestamp   TEXT NOT NULL,
+            timestamp   TIMESTAMPTZ NOT NULL,
             status      TEXT DEFAULT 'sent',
-            isEdited    INTEGER DEFAULT 0,
-            editedAt    TEXT,
-            isRead      INTEGER DEFAULT 0,
+            isEdited    BOOLEAN DEFAULT FALSE,
+            editedAt    TIMESTAMPTZ,
+            isRead      BOOLEAN DEFAULT FALSE,
             replyTo     TEXT
         );
         CREATE TABLE IF NOT EXISTS reactions (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            id          SERIAL PRIMARY KEY,
             messageId   TEXT NOT NULL,
             senderPhone TEXT NOT NULL,
             emoji       TEXT NOT NULL,
@@ -72,8 +81,8 @@ async function initDb() {
             initiatorPhone TEXT NOT NULL,
             recipientPhone TEXT NOT NULL,
             type           TEXT NOT NULL,
-            startTime      TEXT,
-            endTime        TEXT,
+            startTime      TIMESTAMPTZ,
+            endTime        TIMESTAMPTZ,
             status         TEXT DEFAULT 'pending'
         );
         CREATE TABLE IF NOT EXISTS contacts (
@@ -92,24 +101,24 @@ async function initDb() {
             name      TEXT NOT NULL,
             avatar    TEXT,
             createdBy TEXT NOT NULL,
-            createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+            createdAt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS group_members (
             groupId  TEXT NOT NULL,
             phone    TEXT NOT NULL,
             role     TEXT DEFAULT 'member',
-            joinedAt TEXT DEFAULT CURRENT_TIMESTAMP,
+            joinedAt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (groupId, phone)
         );
         CREATE TABLE IF NOT EXISTS ai_history (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            id        SERIAL PRIMARY KEY,
             phone     TEXT NOT NULL,
             chatId    TEXT,
             type      TEXT NOT NULL,
             request   TEXT,
             response  TEXT,
             model     TEXT,
-            timestamp TEXT NOT NULL
+            timestamp TIMESTAMPTZ NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS audit_logs (
@@ -119,30 +128,30 @@ async function initDb() {
             action      TEXT NOT NULL,
             targetPhone TEXT,
             severity    TEXT DEFAULT 'info',
-            meta        TEXT,
+            meta        JSONB,
             ip          TEXT,
             userAgent   TEXT,
-            timestamp   TEXT NOT NULL
+            timestamp   TIMESTAMPTZ NOT NULL
         );
     `);
 
     // ── CHANNELS ─────────────────────────────────────────────────────────────
-    await db.exec(`
+    await pool.query(`
         CREATE TABLE IF NOT EXISTS channels (
             id              TEXT PRIMARY KEY,
             name            TEXT NOT NULL,
             description     TEXT DEFAULT '',
             createdBy       TEXT NOT NULL,
-            isPublic        INTEGER DEFAULT 1,
+            isPublic        BOOLEAN DEFAULT TRUE,
             avatar          TEXT,
             subscriberCount INTEGER DEFAULT 0,
-            createdAt       TEXT DEFAULT CURRENT_TIMESTAMP
+            createdAt       TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS channel_subscribers (
             channelId TEXT NOT NULL,
             phone     TEXT NOT NULL,
             role      TEXT DEFAULT 'subscriber',
-            joinedAt  TEXT DEFAULT CURRENT_TIMESTAMP,
+            joinedAt  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (channelId, phone)
         );
         CREATE TABLE IF NOT EXISTS channel_posts (
@@ -154,7 +163,7 @@ async function initDb() {
             fileUrl     TEXT,
             videoUrl    TEXT,
             views       INTEGER DEFAULT 0,
-            timestamp   TEXT NOT NULL
+            timestamp   TIMESTAMPTZ NOT NULL
         );
         CREATE TABLE IF NOT EXISTS channel_comments (
             id          TEXT PRIMARY KEY,
@@ -163,12 +172,12 @@ async function initDb() {
             senderPhone TEXT NOT NULL,
             senderName  TEXT NOT NULL,
             text        TEXT NOT NULL,
-            timestamp   TEXT NOT NULL
+            timestamp   TIMESTAMPTZ NOT NULL
         );
     `);
 
     // ── STORIES ──────────────────────────────────────────────────────────────
-    await db.exec(`
+    await pool.query(`
         CREATE TABLE IF NOT EXISTS stories (
             id          TEXT PRIMARY KEY,
             authorPhone TEXT NOT NULL,
@@ -177,38 +186,38 @@ async function initDb() {
             imageUrl    TEXT,
             text        TEXT,
             duration    REAL DEFAULT 5,
-            expiresAt   TEXT NOT NULL,
-            createdAt   TEXT DEFAULT CURRENT_TIMESTAMP
+            expiresAt   TIMESTAMPTZ NOT NULL,
+            createdAt   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS story_views (
             storyId     TEXT NOT NULL,
             viewerPhone TEXT NOT NULL,
-            viewedAt    TEXT DEFAULT CURRENT_TIMESTAMP,
+            viewedAt    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (storyId, viewerPhone)
         );
     `);
 
     // ── WALLET & MARKETPLACE ─────────────────────────────────────────────────
-    await db.exec(`
+    await pool.query(`
         CREATE TABLE IF NOT EXISTS transactions (
             id        TEXT PRIMARY KEY,
             fromPhone TEXT NOT NULL,
             toPhone   TEXT NOT NULL,
-            amount    REAL NOT NULL,
+            amount    NUMERIC NOT NULL,
             comment   TEXT DEFAULT '',
             type      TEXT DEFAULT 'transfer',
             status    TEXT DEFAULT 'completed',
-            timestamp TEXT NOT NULL
+            timestamp TIMESTAMPTZ NOT NULL
         );
         CREATE TABLE IF NOT EXISTS marketplace_orders (
             id          TEXT PRIMARY KEY,
             userPhone   TEXT NOT NULL,
             serviceId   TEXT NOT NULL,
             serviceName TEXT NOT NULL,
-            amount      REAL NOT NULL,
+            amount      NUMERIC NOT NULL,
             status      TEXT DEFAULT 'pending',
             details     TEXT,
-            timestamp   TEXT NOT NULL
+            timestamp   TIMESTAMPTZ NOT NULL
         );
         CREATE TABLE IF NOT EXISTS user_services (
             id          TEXT PRIMARY KEY,
@@ -218,57 +227,52 @@ async function initDb() {
             description TEXT DEFAULT '',
             icon        TEXT DEFAULT '🔧',
             category    TEXT DEFAULT 'other',
-            price       REAL DEFAULT 0,
-            isActive    INTEGER DEFAULT 1,
-            createdAt   TEXT DEFAULT CURRENT_TIMESTAMP
+            price       NUMERIC DEFAULT 0,
+            isActive    BOOLEAN DEFAULT TRUE,
+            createdAt   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
     `);
 
-    // ── МИГРАЦИИ — добавляем колонки в существующую БД ───────────────────────
-    const migrations = [
-        "ALTER TABLE users ADD COLUMN bio              TEXT    DEFAULT ''",
-        "ALTER TABLE users ADD COLUMN role             TEXT    DEFAULT 'user'",
-        "ALTER TABLE users ADD COLUMN isBanned         INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN email            TEXT",
-        "ALTER TABLE users ADD COLUMN isVerified       INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN verificationCode TEXT",
-        "ALTER TABLE users ADD COLUMN isPremium        INTEGER DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN premiumUntil     TEXT",
-        "ALTER TABLE users ADD COLUMN balance          REAL    DEFAULT 0.0",
-        "ALTER TABLE users ADD COLUMN pin              TEXT",
-        "ALTER TABLE messages ADD COLUMN isRead        INTEGER DEFAULT 0",
-        "ALTER TABLE messages ADD COLUMN replyTo       TEXT",
-        "ALTER TABLE messages ADD COLUMN isEdited      INTEGER DEFAULT 0",
-        "ALTER TABLE messages ADD COLUMN editedAt      TEXT",
-        "ALTER TABLE channels ADD COLUMN avatar          TEXT",
-        "ALTER TABLE channels ADD COLUMN subscriberCount INTEGER DEFAULT 0",
-        "ALTER TABLE channel_posts ADD COLUMN videoUrl   TEXT",
-    ];
-    for (const sql of migrations) {
-        try { await db.run(sql); } catch (_) { /* already exists */ }
-    }
+    // ── ИНДЕКСЫ для производительности ───────────────────────────────────────
+    await pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_messages_chatId ON messages(chatId);
+        CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_messages_senderPhone ON messages(senderPhone);
+        CREATE INDEX IF NOT EXISTS idx_reactions_messageId ON reactions(messageId);
+        CREATE INDEX IF NOT EXISTS idx_stories_expiresAt ON stories(expiresAt);
+        CREATE INDEX IF NOT EXISTS idx_channel_posts_channelId ON channel_posts(channelId);
+        CREATE INDEX IF NOT EXISTS idx_ai_history_phone ON ai_history(phone);
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
+    `);
 
-    // ── db.transaction() — которого нет в пакете sqlite ─────────────────────
-    if (typeof db.transaction !== 'function') {
-        db.transaction = async function(fn) {
-            await db.run('BEGIN');
-            try {
-                const tx = {
-                    run: (sql, p) => db.run(sql, p),
-                    get: (sql, p) => db.get(sql, p),
-                    all: (sql, p) => db.all(sql, p),
-                };
-                await fn(tx);
-                await db.run('COMMIT');
-            } catch (e) {
-                await db.run('ROLLBACK');
-                throw e;
-            }
-        };
-    }
-
-    console.log(`✅ BAZA DB готова → SQLite (${dbPath})`);
-    return db;
+    console.log(`✅ Все таблицы и индексы созданы`);
+    
+    return pool;
 }
 
-module.exports = { initDb, IS_PG };
+// Обёртка для совместимости с старым API
+const dbProxy = {
+    transaction: async (fn) => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const tx = {
+                run: async (sql, params) => await client.query(sql, params),
+                get: async (sql, params) => (await client.query(sql, params)).rows[0],
+                all: async (sql, params) => (await client.query(sql, params)).rows,
+            };
+            await fn(tx);
+            await client.query('COMMIT');
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
+    },
+    run: async (sql, params) => await pool.query(sql, params),
+    get: async (sql, params) => (await pool.query(sql, params)).rows[0],
+    all: async (sql, params) => (await pool.query(sql, params)).rows,
+};
+
+module.exports = { initDb, IS_PG, getDb: () => pool };

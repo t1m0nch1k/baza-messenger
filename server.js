@@ -280,76 +280,130 @@ const parseMsg = m => {
     global.db = await initDb();
 
     // ── Миграции новых таблиц ──────────────────────────────────────────────────
-    await global.db.run(`CREATE TABLE IF NOT EXISTS pinned_messages (
-        chatId TEXT PRIMARY KEY, messageId TEXT NOT NULL,
-        pinnedBy TEXT, pinnedAt TEXT)`).catch(()=>{});
-    await global.db.run(`CREATE TABLE IF NOT EXISTS drafts (
-        phone TEXT NOT NULL, chatId TEXT NOT NULL, text TEXT, updatedAt TEXT,
-        PRIMARY KEY(phone, chatId))`).catch(()=>{});
-    await global.db.run(`CREATE TABLE IF NOT EXISTS message_reads (
-        messageId TEXT NOT NULL, chatId TEXT NOT NULL,
-        readerPhone TEXT NOT NULL, readAt TEXT,
-        PRIMARY KEY(messageId, readerPhone))`).catch(()=>{});
-    await global.db.run(`ALTER TABLE users ADD COLUMN autoReply INTEGER DEFAULT 0`).catch(()=>{});
-    await global.db.run(`ALTER TABLE users ADD COLUMN autoReplyText TEXT DEFAULT ''`).catch(()=>{});
-    await global.db.run(`ALTER TABLE users ADD COLUMN premiumUntil TEXT DEFAULT NULL`).catch(()=>{});
+    if (!IS_PG) {
+        await global.db.run(`CREATE TABLE IF NOT EXISTS pinned_messages (
+            chatId TEXT PRIMARY KEY, messageId TEXT NOT NULL,
+            pinnedBy TEXT, pinnedAt TEXT)`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS drafts (
+            phone TEXT NOT NULL, chatId TEXT NOT NULL, text TEXT, updatedAt TEXT,
+            PRIMARY KEY(phone, chatId))`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS message_reads (
+            messageId TEXT NOT NULL, chatId TEXT NOT NULL,
+            readerPhone TEXT NOT NULL, readAt TEXT,
+            PRIMARY KEY(messageId, readerPhone))`).catch(()=>{});
+        await global.db.run(`ALTER TABLE users ADD COLUMN autoReply INTEGER DEFAULT 0`).catch(()=>{});
+        await global.db.run(`ALTER TABLE users ADD COLUMN autoReplyText TEXT DEFAULT ''`).catch(()=>{});
+        await global.db.run(`ALTER TABLE users ADD COLUMN premiumUntil TEXT DEFAULT NULL`).catch(()=>{});
 
-    // ── Таблица для токенов сброса пароля ─────────────────────────────────────
-    await global.db.run(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
-        token TEXT PRIMARY KEY,
-        phone TEXT NOT NULL,
-        expiresAt TEXT NOT NULL,
-        used INTEGER DEFAULT 0,
-        createdAt TEXT DEFAULT CURRENT_TIMESTAMP
-    )`).catch(()=>{});
+        // ── Таблица для токенов сброса пароля ─────────────────────────────────────
+        await global.db.run(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            token TEXT PRIMARY KEY,
+            phone TEXT NOT NULL,
+            expiresAt TEXT NOT NULL,
+            used INTEGER DEFAULT 0,
+            createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+        )`).catch(()=>{});
 
-    await global.db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
-        id          TEXT PRIMARY KEY,
-        actorPhone  TEXT,
-        actorType   TEXT DEFAULT 'user',
-        action      TEXT NOT NULL,
-        targetPhone TEXT,
-        severity    TEXT DEFAULT 'info',
-        meta        TEXT,
-        ip          TEXT,
-        userAgent   TEXT,
-        timestamp   TEXT NOT NULL
-    )`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
+            id          TEXT PRIMARY KEY,
+            actorPhone  TEXT,
+            actorType   TEXT DEFAULT 'user',
+            action      TEXT NOT NULL,
+            targetPhone TEXT,
+            severity    TEXT DEFAULT 'info',
+            meta        TEXT,
+            ip          TEXT,
+            userAgent   TEXT,
+            timestamp   TEXT NOT NULL
+        )`).catch(()=>{});
 
-    // ── Таблицы каналов (создаём если нет — безопасно при любом db.js) ─────────
-    await global.db.run(`CREATE TABLE IF NOT EXISTS channels (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
-        avatar TEXT, createdBy TEXT NOT NULL, isPublic INTEGER DEFAULT 1,
-        subscriberCount INTEGER DEFAULT 0, createdAt TEXT DEFAULT CURRENT_TIMESTAMP
-    )`).catch(()=>{});
-    await global.db.run(`CREATE TABLE IF NOT EXISTS channel_subscribers (
-        channelId TEXT NOT NULL, phone TEXT NOT NULL, role TEXT DEFAULT 'subscriber',
-        notifications INTEGER DEFAULT 1,
-        joinedAt TEXT DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY(channelId, phone)
-    )`).catch(()=>{});
-    await global.db.run(`CREATE TABLE IF NOT EXISTS channel_posts (
-        id TEXT PRIMARY KEY, channelId TEXT NOT NULL, authorPhone TEXT NOT NULL,
-        authorName TEXT NOT NULL, text TEXT, fileUrl TEXT, videoUrl TEXT,
-        views INTEGER DEFAULT 0, timestamp TEXT NOT NULL
-    )`).catch(()=>{});
-    await global.db.run(`CREATE TABLE IF NOT EXISTS channel_comments (
-        id TEXT PRIMARY KEY, postId TEXT NOT NULL, channelId TEXT NOT NULL,
-        senderPhone TEXT NOT NULL, senderName TEXT NOT NULL,
-        text TEXT NOT NULL, timestamp TEXT NOT NULL
-    )`).catch(()=>{});
-    // Миграция: добавить поле notifications если его нет
-    await global.db.run(`ALTER TABLE channel_subscribers ADD COLUMN notifications INTEGER DEFAULT 1`).catch(()=>{});
-    // Реакции на посты канала
-    await global.db.run(`CREATE TABLE IF NOT EXISTS channel_post_reactions (
-        postId TEXT NOT NULL, phone TEXT NOT NULL, emoji TEXT NOT NULL,
-        createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY(postId, phone, emoji)
-    )`).catch(()=>{});
-    // Аватар канала (миграция поля)
-    await global.db.run(`ALTER TABLE channels ADD COLUMN avatar TEXT DEFAULT NULL`).catch(()=>{});
-    // Инвайт-токен для приватных каналов
-    await global.db.run(`ALTER TABLE channels ADD COLUMN inviteToken TEXT DEFAULT NULL`).catch(()=>{});
+        // ── Таблицы каналов (создаём если нет — безопасно при любом db.js) ─────────
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channels (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
+            avatar TEXT, createdBy TEXT NOT NULL, isPublic INTEGER DEFAULT 1,
+            subscriberCount INTEGER DEFAULT 0, createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+        )`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channel_subscribers (
+            channelId TEXT NOT NULL, phone TEXT NOT NULL, role TEXT DEFAULT 'subscriber',
+            notifications INTEGER DEFAULT 1,
+            joinedAt TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(channelId, phone)
+        )`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channel_posts (
+            id TEXT PRIMARY KEY, channelId TEXT NOT NULL, authorPhone TEXT NOT NULL,
+            authorName TEXT NOT NULL, text TEXT, fileUrl TEXT, videoUrl TEXT,
+            views INTEGER DEFAULT 0, timestamp TEXT NOT NULL
+        )`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channel_comments (
+            id TEXT PRIMARY KEY, postId TEXT NOT NULL, channelId TEXT NOT NULL,
+            senderPhone TEXT NOT NULL, senderName TEXT NOT NULL,
+            text TEXT NOT NULL, timestamp TEXT NOT NULL
+        )`).catch(()=>{});
+        // Миграция: добавить поле notifications если его нет
+        await global.db.run(`ALTER TABLE channel_subscribers ADD COLUMN notifications INTEGER DEFAULT 1`).catch(()=>{});
+        // Реакции на посты канала
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channel_post_reactions (
+            postId TEXT NOT NULL, phone TEXT NOT NULL, emoji TEXT NOT NULL,
+            createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(postId, phone, emoji)
+        )`).catch(()=>{});
+        // Аватар канала (миграция поля)
+        await global.db.run(`ALTER TABLE channels ADD COLUMN avatar TEXT DEFAULT NULL`).catch(()=>{});
+        // Инвайт-токен для приватных каналов
+        await global.db.run(`ALTER TABLE channels ADD COLUMN inviteToken TEXT DEFAULT NULL`).catch(()=>{});
+    } else {
+        // PostgreSQL версии таблиц с правильными типами
+        await global.db.run(`CREATE TABLE IF NOT EXISTS pinned_messages (
+            chatId TEXT PRIMARY KEY, "messageId" TEXT NOT NULL,
+            "pinnedBy" TEXT, "pinnedAt" TIMESTAMPTZ)`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS drafts (
+            phone TEXT NOT NULL, "chatId" TEXT NOT NULL, text TEXT, "updatedAt" TIMESTAMPTZ,
+            PRIMARY KEY(phone, "chatId"))`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS message_reads (
+            "messageId" TEXT NOT NULL, "chatId" TEXT NOT NULL,
+            "readerPhone" TEXT NOT NULL, "readAt" TIMESTAMPTZ,
+            PRIMARY KEY("messageId", "readerPhone"))`).catch(()=>{});
+        await global.db.run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "autoReply" BOOLEAN DEFAULT FALSE`).catch(()=>{});
+        await global.db.run(`ALTER TABLE users ADD COLUMN IF NOT EXISTS "autoReplyText" TEXT DEFAULT ''`).catch(()=>{});
+
+        await global.db.run(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            token TEXT PRIMARY KEY,
+            phone TEXT NOT NULL,
+            "expiresAt" TIMESTAMPTZ NOT NULL,
+            used BOOLEAN DEFAULT FALSE,
+            "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )`).catch(()=>{});
+
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channels (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
+            avatar TEXT, "createdBy" TEXT NOT NULL, "isPublic" BOOLEAN DEFAULT TRUE,
+            "subscriberCount" INTEGER DEFAULT 0, "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channel_subscribers (
+            "channelId" TEXT NOT NULL, phone TEXT NOT NULL, role TEXT DEFAULT 'subscriber',
+            notifications BOOLEAN DEFAULT TRUE,
+            "joinedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY("channelId", phone)
+        )`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channel_posts (
+            id TEXT PRIMARY KEY, "channelId" TEXT NOT NULL, "authorPhone" TEXT NOT NULL,
+            "authorName" TEXT NOT NULL, text TEXT, "fileUrl" TEXT, "videoUrl" TEXT,
+            views INTEGER DEFAULT 0, timestamp TIMESTAMPTZ NOT NULL
+        )`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channel_comments (
+            id TEXT PRIMARY KEY, "postId" TEXT NOT NULL, "channelId" TEXT NOT NULL,
+            "senderPhone" TEXT NOT NULL, "senderName" TEXT NOT NULL,
+            text TEXT NOT NULL, timestamp TIMESTAMPTZ NOT NULL
+        )`).catch(()=>{});
+        await global.db.run(`ALTER TABLE channel_subscribers ADD COLUMN IF NOT EXISTS notifications BOOLEAN DEFAULT TRUE`).catch(()=>{});
+        await global.db.run(`CREATE TABLE IF NOT EXISTS channel_post_reactions (
+            "postId" TEXT NOT NULL, phone TEXT NOT NULL, emoji TEXT NOT NULL,
+            "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY("postId", phone, emoji)
+        )`).catch(()=>{});
+        await global.db.run(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS avatar TEXT DEFAULT NULL`).catch(()=>{});
+        await global.db.run(`ALTER TABLE channels ADD COLUMN IF NOT EXISTS "inviteToken" TEXT DEFAULT NULL`).catch(()=>{});
+    }
 
     // ── Таблицы ботов ──────────────────────────────────────────────────────────
     await global.db.run(`CREATE TABLE IF NOT EXISTS bots (
