@@ -170,6 +170,35 @@ async function sendVerificationEmail(email, code) {
     } catch (e) { console.error('❌ Email error:', e.message); return false; }
 }
 
+/**
+ * Отправка письма для сброса пароля
+ * @param {string} email - адрес получателя
+ * @param {string} resetLink - ссылка для сброса пароля
+ */
+async function sendPasswordResetEmail(email, resetLink) {
+    if (!SMTP_USER) { console.warn('⚠️  SMTP_USER не задан — письмо не отправлено'); return false; }
+    try {
+        await transporter.sendMail({
+            from: `"БАЗА Мессенджер" <${SMTP_USER}>`,
+            to: email,
+            subject: 'Восстановление пароля — БАЗА',
+            html: `<div style="font-family:sans-serif;max-width:420px;margin:0 auto;background:#111318;color:#e8eaf0;padding:32px;border-radius:16px">
+                <div style="text-align:center;font-size:28px;font-weight:800;letter-spacing:2px;color:#7c8bff;margin-bottom:6px">БАЗА</div>
+                <p style="text-align:center;color:#8b8fa8;margin-bottom:24px">Super App · Защищённая коммуникация</p>
+                <p>Вы запросили восстановление пароля. Нажмите на кнопку ниже, чтобы установить новый пароль:</p>
+                <div style="text-align:center;margin:28px 0">
+                    <a href="${resetLink}" style="display:inline-block;background:#5c6ef8;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:700;font-size:16px">Сбросить пароль</a>
+                </div>
+                <p style="color:#8b8fa8;font-size:13px">Или скопируйте ссылку:</p>
+                <div style="background:#191c24;padding:12px;border-radius:6px;word-break:break-all;color:#a0a8c0;font-size:12px">${resetLink}</div>
+                <p style="color:#8b8fa8;font-size:12px;margin-top:20px">Ссылка действительна 15 минут. Если вы не запрашивали сброс пароля — просто проигнорируйте это письмо.</p>
+                <p style="color:#8b8fa8;font-size:12px">В целях безопасности не передавайте эту ссылку никому.</p>
+            </div>`
+        });
+        return true;
+    } catch (e) { console.error('❌ Password reset email error:', e.message); return false; }
+}
+
 // ── UTILITIES ─────────────────────────────────────────────────────────────────
 const ts    = () => new Date().toISOString();
 const uid   = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -265,6 +294,15 @@ const parseMsg = m => {
     await global.db.run(`ALTER TABLE users ADD COLUMN autoReplyText TEXT DEFAULT ''`).catch(()=>{});
     await global.db.run(`ALTER TABLE users ADD COLUMN premiumUntil TEXT DEFAULT NULL`).catch(()=>{});
 
+    // ── Таблица для токенов сброса пароля ─────────────────────────────────────
+    await global.db.run(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        token TEXT PRIMARY KEY,
+        phone TEXT NOT NULL,
+        expiresAt TEXT NOT NULL,
+        used INTEGER DEFAULT 0,
+        createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+    )`).catch(()=>{});
+
     await global.db.run(`CREATE TABLE IF NOT EXISTS audit_logs (
         id          TEXT PRIMARY KEY,
         actorPhone  TEXT,
@@ -312,6 +350,28 @@ const parseMsg = m => {
     await global.db.run(`ALTER TABLE channels ADD COLUMN avatar TEXT DEFAULT NULL`).catch(()=>{});
     // Инвайт-токен для приватных каналов
     await global.db.run(`ALTER TABLE channels ADD COLUMN inviteToken TEXT DEFAULT NULL`).catch(()=>{});
+
+    // ── Таблицы ботов ──────────────────────────────────────────────────────────
+    await global.db.run(`CREATE TABLE IF NOT EXISTS bots (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        username    TEXT NOT NULL UNIQUE,
+        ownerId     TEXT NOT NULL,
+        token       TEXT NOT NULL UNIQUE,
+        avatarEmoji TEXT DEFAULT '🤖',
+        description TEXT DEFAULT '',
+        webhookUrl  TEXT DEFAULT '',
+        isActive    INTEGER DEFAULT 1,
+        miniAppUrl  TEXT DEFAULT '',
+        miniAppTitle TEXT DEFAULT '',
+        createdAt   TEXT NOT NULL
+    )`).catch(()=>{});
+    await global.db.run(`CREATE TABLE IF NOT EXISTS bot_commands (
+        id          TEXT PRIMARY KEY,
+        botId       TEXT NOT NULL,
+        command     TEXT NOT NULL,
+        description TEXT DEFAULT ''
+    )`).catch(()=>{});
 
     const aiP = getAiProvider();
     console.log(`🤖 AI провайдер: ${aiP ? '✅ ' + aiP.name + ' (' + aiP.model + ')' : '❌ нет ключей MISTRAL_API_KEY / GROQ_API_KEY'}`);
@@ -974,6 +1034,126 @@ io.on('connection', socket => {
             await global.db.run('UPDATE users SET isVerified=1, verificationCode=NULL WHERE phone=?', [p]);
             socket.emit('verify:success', { phone: p });
         } catch (err) { socket.emit('verify:error', 'Ошибка подтверждения'); }
+    });
+
+    // ── ВОССТАНОВЛЕНИЕ ПАРОЛЯ ЧЕРЕЗ EMAIL ─────────────────────────────────────
+    /**
+     * Шаг 1: Запрос на сброс пароля — генерация токена и отправка email
+     */
+    socket.on('password:forgot', async ({ phone }) => {
+        try {
+            const p = (phone || '').trim();
+            const user = await global.db.get('SELECT email, isVerified FROM users WHERE phone=?', [p]);
+            
+            if (!user) {
+                // Не раскрываем, существует ли пользователь — для безопасности
+                return socket.emit('password:forgot:sent', { phone: p });
+            }
+            
+            if (!user.email) {
+                return socket.emit('password:forgot:error', 'Email не привязан к этому аккаунту');
+            }
+            
+            // Генерируем токен сброса
+            const token = require('crypto').randomBytes(32).toString('hex');
+            const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 минут
+            
+            // Сохраняем токен в БД
+            await global.db.run(
+                'INSERT INTO password_reset_tokens (token, phone, expiresAt) VALUES (?, ?, ?)',
+                [token, p, expiresAt]
+            );
+            
+            // Отправляем email со ссылкой
+            const resetLink = `http://${process.env.HOST || 'localhost'}:${PORT}/reset-password.html?token=${token}`;
+            const sent = await sendPasswordResetEmail(user.email, resetLink);
+            
+            socket.emit('password:forgot:sent', { phone: p, emailSent: sent });
+            
+            if (!sent) {
+                console.warn('⚠️  Письмо со сбросом пароля не отправлено (SMTP не настроен)');
+            }
+        } catch (err) {
+            console.error('password:forgot error:', err);
+            socket.emit('password:forgot:error', 'Ошибка сервера при запросе сброса пароля');
+        }
+    });
+    
+    /**
+     * Шаг 2: Проверка токена (при загрузке страницы сброса)
+     */
+    socket.on('password:check_token', async ({ token }) => {
+        try {
+            if (!token) return socket.emit('password:token:invalid');
+            
+            const record = await global.db.get(
+                'SELECT phone, expiresAt, used FROM password_reset_tokens WHERE token=?',
+                [token]
+            );
+            
+            if (!record) return socket.emit('password:token:invalid');
+            if (record.used) return socket.emit('password:token:used');
+            if (new Date(record.expiresAt) < new Date()) {
+                // Токен истёк — удаляем
+                await global.db.run('DELETE FROM password_reset_tokens WHERE token=?', [token]);
+                return socket.emit('password:token:expired');
+            }
+            
+            socket.emit('password:token:valid', { phone: record.phone });
+        } catch (err) {
+            console.error('password:check_token error:', err);
+            socket.emit('password:token:invalid');
+        }
+    });
+    
+    /**
+     * Шаг 3: Установка нового пароля
+     */
+    socket.on('password:reset', async ({ token, newPassword }) => {
+        try {
+            if (!token || !newPassword) {
+                return socket.emit('password:reset:error', 'Токен и новый пароль обязательны');
+            }
+            
+            if (newPassword.length < 6) {
+                return socket.emit('password:reset:error', 'Пароль должен быть не менее 6 символов');
+            }
+            
+            const record = await global.db.get(
+                'SELECT phone, expiresAt, used FROM password_reset_tokens WHERE token=?',
+                [token]
+            );
+            
+            if (!record) return socket.emit('password:reset:error', 'Неверный токен');
+            if (record.used) return socket.emit('password:reset:error', 'Токен уже использован');
+            if (new Date(record.expiresAt) < new Date()) {
+                await global.db.run('DELETE FROM password_reset_tokens WHERE token=?', [token]);
+                return socket.emit('password:reset:error', 'Токен истёк');
+            }
+            
+            // Хешируем новый пароль
+            const passwordHash = await bcrypt.hash(newPassword, 10);
+            
+            // Обновляем пароль в БД
+            await global.db.run('UPDATE users SET passwordHash=? WHERE phone=?', [passwordHash, record.phone]);
+            
+            // Помечаем токен как использованный
+            await global.db.run('UPDATE password_reset_tokens SET used=1 WHERE token=?', [token]);
+            
+            // Логируем событие
+            await auditLog({
+                actorPhone: record.phone,
+                actorType: 'user',
+                action: 'password.reset',
+                targetPhone: record.phone,
+                severity: 'warning'
+            });
+            
+            socket.emit('password:reset:success', { phone: record.phone });
+        } catch (err) {
+            console.error('password:reset error:', err);
+            socket.emit('password:reset:error', 'Ошибка сервера при сбросе пароля');
+        }
     });
 
     socket.on('auth', async ({ phone, password }) => {
@@ -2446,32 +2626,39 @@ io.on('connection', socket => {
 
 const crypto = require('crypto');
 
-// Убедимся что таблицы ботов существуют
+// Убедимся что таблицы ботов существуют (теперь создаются в основном init)
 async function ensureBotTables() {
-    await global.db.run(`CREATE TABLE IF NOT EXISTS bots (
-        id          TEXT PRIMARY KEY,
-        name        TEXT NOT NULL,
-        username    TEXT NOT NULL UNIQUE,
-        ownerId     TEXT NOT NULL,
-        token       TEXT NOT NULL UNIQUE,
-        avatarEmoji TEXT DEFAULT '🤖',
-        description TEXT DEFAULT '',
-        webhookUrl  TEXT DEFAULT '',
-        isActive    INTEGER DEFAULT 1,
-        miniAppUrl  TEXT DEFAULT '',
-        miniAppTitle TEXT DEFAULT '',
-        createdAt   TEXT NOT NULL
-    )`);
-    await global.db.run(`CREATE TABLE IF NOT EXISTS bot_commands (
-        id          TEXT PRIMARY KEY,
-        botId       TEXT NOT NULL,
-        command     TEXT NOT NULL,
-        description TEXT DEFAULT ''
-    )`);
+    // Таблицы уже созданы в основном блоке инициализации БД
+    if (!global.db) return;
+    // Проверяем существование таблиц и создаём если нет
+    try {
+        await global.db.run(`CREATE TABLE IF NOT EXISTS bots (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            username    TEXT NOT NULL UNIQUE,
+            ownerId     TEXT NOT NULL,
+            token       TEXT NOT NULL UNIQUE,
+            avatarEmoji TEXT DEFAULT '🤖',
+            description TEXT DEFAULT '',
+            webhookUrl  TEXT DEFAULT '',
+            isActive    INTEGER DEFAULT 1,
+            miniAppUrl  TEXT DEFAULT '',
+            miniAppTitle TEXT DEFAULT '',
+            createdAt   TEXT NOT NULL
+        )`);
+        await global.db.run(`CREATE TABLE IF NOT EXISTS bot_commands (
+            id          TEXT PRIMARY KEY,
+            botId       TEXT NOT NULL,
+            command     TEXT NOT NULL,
+            description TEXT DEFAULT ''
+        )`);
+    } catch(e) {
+        console.error('Error creating bot tables:', e.message);
+    }
 }
 
-// Инициализируем при старте
-ensureBotTables().catch(e => console.error('bot tables error:', e.message));
+// Инициализируем при старте (после инициализации БД)
+setTimeout(() => ensureBotTables().catch(e => console.error('bot tables error:', e.message)), 100);
 
 // ── HTTP API для ботов (аналог Telegram Bot API) ──────────────────────────────
 
@@ -2545,16 +2732,170 @@ app.post('/api/bot/:token/setCommands', async (req, res) => {
     res.json({ ok: true });
 });
 
-// ── Mini App: отдаём HTML по URL ──────────────────────────────────────────────
-// GET /miniapp/:botId — открывает miniAppUrl в iframe (проксируем или редиректим)
+// ── Mini App: нативный запуск HTML страниц ────────────────────────────────────
+// Создаём директорию для мини-приложений
+const MINIAPPS_DIR = path.join(__dirname, 'miniapps');
+fs.mkdir(MINIAPPS_DIR, { recursive: true }).catch(() => {});
+
+// Статический доступ к мини-приложениям
+app.use('/miniapps', express.static(MINIAPPS_DIR));
+
+// GET /api/miniapp/create — создание мини-приложения из HTML контента
+app.post('/api/miniapp/create', async (req, res) => {
+    try {
+        const { botId, name, htmlContent } = req.body;
+        if (!botId || !name || !htmlContent) {
+            return res.status(400).json({ error: 'Требуется botId, name и htmlContent' });
+        }
+        
+        // Проверяем существование бота
+        const bot = await global.db.get('SELECT id FROM bots WHERE id=?', [botId]);
+        if (!bot) {
+            return res.status(404).json({ error: 'Бот не найден' });
+        }
+        
+        // Создаём безопасное имя файла
+        const safeName = name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const fileName = `${safeName}_${Date.now()}.html`;
+        const filePath = path.join(MINIAPPS_DIR, fileName);
+        
+        // Сохраняем HTML файл
+        await fs.writeFile(filePath, htmlContent, 'utf8');
+        
+        // Обновляем запись бота с путём к мини-приложению
+        const miniAppUrl = `/miniapps/${fileName}`;
+        await global.db.run(
+            'UPDATE bots SET miniAppUrl=?, miniAppTitle=? WHERE id=?',
+            [miniAppUrl, name, botId]
+        );
+        
+        res.json({ success: true, url: miniAppUrl, path: filePath });
+    } catch (e) {
+        console.error('Ошибка создания мини-приложения:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /api/miniapp/list — список всех мини-приложений
+app.get('/api/miniapp/list', async (req, res) => {
+    try {
+        const files = await fs.readdir(MINIAPPS_DIR);
+        const htmlFiles = files.filter(f => f.endsWith('.html'));
+        const apps = [];
+        
+        for (const file of htmlFiles) {
+            const filePath = path.join(MINIAPPS_DIR, file);
+            const stats = await fs.stat(filePath);
+            apps.push({
+                fileName: file,
+                url: `/miniapps/${file}`,
+                size: stats.size,
+                createdAt: stats.birthtime,
+                modifiedAt: stats.mtime
+            });
+        }
+        
+        res.json(apps);
+    } catch (e) {
+        console.error('Ошибка получения списка мини-приложений:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// DELETE /api/miniapp/delete/:fileName — удаление мини-приложения
+app.delete('/api/miniapp/delete/:fileName', async (req, res) => {
+    try {
+        const { fileName } = req.params;
+        if (!fileName.endsWith('.html')) {
+            return res.status(400).json({ error: 'Неверный формат файла' });
+        }
+        
+        const filePath = path.join(MINIAPPS_DIR, fileName);
+        await fs.unlink(filePath);
+        
+        // Очищаем ссылку у связанных ботов
+        await global.db.run(
+            'UPDATE bots SET miniAppUrl=NULL, miniAppTitle=NULL WHERE miniAppUrl LIKE ?',
+            [`%/miniapps/${fileName}`]
+        );
+        
+        res.json({ success: true });
+    } catch (e) {
+        console.error('Ошибка удаления мини-приложения:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// GET /miniapp/:botId — открывает мини-приложение бота
 app.get('/miniapp/:botId', async (req, res) => {
-    const bot = await global.db.get('SELECT miniAppUrl,miniAppTitle,name FROM bots WHERE id=?', [req.params.botId]);
+    const bot = await global.db.get('SELECT miniAppUrl,miniAppTitle,name,id FROM bots WHERE id=?', [req.params.botId]);
     if (!bot?.miniAppUrl) return res.status(404).send('Mini App не найден');
-    // Редирект на внешний URL или отдаём встроенную страницу
+    
+    // Если это внешний URL — редирект
     if (bot.miniAppUrl.startsWith('http')) {
         return res.redirect(bot.miniAppUrl);
     }
+    
+    // Если это локальный файл — отдаём его через редирект
     res.redirect(bot.miniAppUrl);
+});
+
+// GET /miniapp/view/:botId — просмотр мини-приложения в iframe (обёртка)
+app.get('/miniapp/view/:botId', async (req, res) => {
+    const bot = await global.db.get('SELECT miniAppUrl,miniAppTitle,name,id FROM bots WHERE id=?', [req.params.botId]);
+    if (!bot?.miniAppUrl) return res.status(404).send('Mini App не найден');
+    
+    const appUrl = bot.miniAppUrl.startsWith('http') ? bot.miniAppUrl : bot.miniAppUrl;
+    
+    res.send(`
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${bot.miniAppTitle || bot.name || 'Mini App'}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body, html { width: 100%; height: 100%; overflow: hidden; }
+        iframe { width: 100%; height: 100%; border: none; }
+        .header { 
+            position: fixed; top: 0; left: 0; right: 0; 
+            background: #1a1d24; color: white; padding: 12px 20px;
+            z-index: 1000; display: flex; align-items: center; gap: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        .header h1 { font-size: 16px; font-weight: 600; }
+        .content { margin-top: 50px; height: calc(100% - 50px); }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <span>🤖</span>
+        <h1>${bot.miniAppTitle || bot.name || 'Mini App'}</h1>
+    </div>
+    <div class="content">
+        <iframe src="${appUrl}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+    </div>
+    <script>
+        // Telegram WebApp API совместимость
+        window.Telegram = window.Telegram || {};
+        window.Telegram.WebApp = {
+            ready: () => console.log('Mini App готов'),
+            expand: () => {},
+            close: () => window.close(),
+            sendData: (data) => console.log('sendData:', data),
+            themeParams: {},
+            platform: 'web'
+        };
+        
+        // Сообщаем родительскому окну о готовности
+        window.addEventListener('load', () => {
+            window.parent.postMessage({ type: 'MINI_APP_READY', botId: '${bot.id}' }, '*');
+        });
+    </script>
+</body>
+</html>
+    `);
 });
 
 // ── Socket.IO события для управления ботами ──────────────────────────────────

@@ -1,58 +1,26 @@
-﻿# ════════════════════════════════════════════════════════════════════════
-#  БАЗА v2 — .gitignore
-# ════════════════════════════════════════════════════════════════════════
-
-# ── Node.js ─────────────────────────────────────────────────────────────
-node_modules/
-package-lock.json
-npm-debug.log*
-
-# ── База данных (SQLite) ────────────────────────────────────────────────
+```
+# Database files
 *.db
 *.db-shm
 *.db-wal
-*.sqlite
-*.sqlite3
 
-# ── Переменные окружения ────────────────────────────────────────────────
-.env
-.env.local
-.env.production
-*.env
+# Dependencies
+node_modules/
 
-# ── Загруженные файлы (медиа, голосовые, видео) ─────────────────────────
-uploads/
-voice/
-videos/
-stickerpack/
-!uploads/.gitkeep
-!voice/.gitkeep
-!videos/.gitkeep
-!stickerpack/.gitkeep
-
-# ── Логи ────────────────────────────────────────────────────────────────
+# Logs and temp files
 *.log
-logs/
-error.log
-
-# ── Временные файлы и ОС ────────────────────────────────────────────────
-tmp/
-temp/
-Thumbs.db
-.DS_Store
 *.tmp
 
-# ── Бинарники и инструменты ─────────────────────────────────────────────
-cloudflared.exe
-ngrok.exe
-*.exe
+# Environment
+.env
+.env.local
+.env.*
 
-# ── IDE и редакторы ────────────────────────────────────────────────────
+# Editors
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# ── Сборка (если будет) ─────────────────────────────────────────────────
-dist/
-build/
+# OS generated files
+.DS_Store
+Thumbs.db
+```
