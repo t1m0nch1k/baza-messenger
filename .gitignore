@@ -1,8 +1,2 @@
-```
-# Dependencies
-node_modules/
-# Environment
-.env
-.env.local
-.env.*
-```
+# Examples
+.gitignore
