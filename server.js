@@ -211,7 +211,7 @@ async function emitToChat(chatId, event, data) {
     try {
         let phones;
         if (chatId.startsWith('g_')) {
-            const rows = await global.db.all('SELECT phone FROM group_members WHERE groupId=?', [chatId]);
+            const rows = await global.db.all('SELECT phone FROM group_members WHERE groupId=$1', [chatId]);
             phones = rows.map(r => r.phone);
         } else {
             phones = chatId.split('_').filter(Boolean);
@@ -245,7 +245,7 @@ async function saveMsg(m) {
 }
 
 function generateAvatar(name) {
-    const initials = (name || '?').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+    const initials = (name || '$1').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
     const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F'];
     const color = colors[initials.charCodeAt(0) % colors.length];
     return `<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg"><rect width="40" height="40" fill="${color}" rx="8"/><text x="20" y="25" font-size="16" font-weight="bold" text-anchor="middle" fill="white">${initials}</text></svg>`;
@@ -428,9 +428,9 @@ const parseMsg = m => {
     )`).catch(()=>{});
 
     const aiP = getAiProvider();
-    console.log(`🤖 AI провайдер: ${aiP ? '✅ ' + aiP.name + ' (' + aiP.model + ')' : '❌ нет ключей MISTRAL_API_KEY / GROQ_API_KEY'}`);
-    console.log(`📧 SMTP: ${SMTP_USER ? '✅ ' + SMTP_USER : '⚠️  не настроен'}`);
-    console.log(`🗄️  БД: ${IS_PG ? 'PostgreSQL' : 'SQLite'}`);
+    console.log(`🤖 AI провайдер: ${aiP $1 '✅ ' + aiP.name + ' (' + aiP.model + ')' : '❌ нет ключей MISTRAL_API_KEY / GROQ_API_KEY'}`);
+    console.log(`📧 SMTP: ${SMTP_USER $1 '✅ ' + SMTP_USER : '⚠️  не настроен'}`);
+    console.log(`🗄️  БД: ${IS_PG $1 'PostgreSQL' : 'SQLite'}`);
 })();
 
 // ── MIDDLEWARE ────────────────────────────────────────────────────────────────
@@ -483,15 +483,15 @@ app.get('/api/chat/export', async (req, res) => {
     const { phone, chatId } = req.query;
     if (!phone || !chatId) return res.status(400).json({ error: 'Нужны phone и chatId' });
     const isParticipant = chatId.includes(phone) ||
-        await global.db.get('SELECT 1 FROM group_members WHERE groupId=? AND phone=?', [chatId, phone]).catch(()=>null);
+        await global.db.get('SELECT 1 FROM group_members WHERE groupId=$1 AND phone=$2', [chatId, phone]).catch(()=>null);
     if (!isParticipant) return res.status(403).json({ error: 'Нет доступа' });
     const msgs = await global.db.all(
-        'SELECT senderName,text,timestamp,audioUrl,videoUrl,fileUrl FROM messages WHERE chatId=? ORDER BY timestamp ASC',
+        'SELECT senderName,text,timestamp,audioUrl,videoUrl,fileUrl FROM messages WHERE chatId=$1 ORDER BY timestamp ASC',
         [chatId]
     );
     const lines = msgs.map(m => {
         const time    = new Date(m.timestamp).toLocaleString('ru-RU');
-        const content = m.text || (m.audioUrl?'[Голосовое]':m.videoUrl?'[Видео]':m.fileUrl?'[Файл]':'');
+        const content = m.text || (m.audioUrl?'[Голосовое]':m.videoUrl$1'[Видео]':m.fileUrl$1'[Файл]':'');
         return `[${time}] ${m.senderName}: ${content}`;
     });
     const out = `БАЗА Мессенджер — история чата\nЭкспорт: ${new Date().toLocaleString('ru-RU')}\n${'─'.repeat(50)}\n${lines.join('\n')}`;
@@ -517,7 +517,7 @@ async function checkAiAccess(phone) {
     if (!global.db) return { error: 'Сервер запускается, подождите несколько секунд', status: 503 };
     if (!phone) return { error: 'Не передан phone', status: 400 };
     try {
-        const user = await global.db.get('SELECT isPremium FROM users WHERE phone=?', [phone]);
+        const user = await global.db.get('SELECT isPremium FROM users WHERE phone=$1', [phone]);
         if (!user) return { error: 'Пользователь не найден', status: 404 };
         if (!user.isPremium) return { error: 'Функция доступна только в БАЗА Плюс', status: 403 };
     } catch(e) {
@@ -555,8 +555,8 @@ app.post('/api/ai/smart-reply', async (req, res) => {
         } catch (_) {}
 
         await global.db.run(
-            'INSERT INTO ai_history (phone,chatId,type,request,response,model,timestamp) VALUES (?,?,?,?,?,?,?)',
-            [phone, chatId, 'smart_reply', lastMsgs.slice(0, 500), JSON.stringify(replies), getAiProvider()?.name||'ai', ts()]
+            'INSERT INTO ai_history (phone,chatId,type,request,response,model,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+            [phone, chatId, 'smart_reply', lastMsgs.slice(0, 500), JSON.stringify(replies), getAiProvider()$1.name||'ai', ts()]
         ).catch(() => {});
 
         res.json({ replies });
@@ -580,7 +580,7 @@ app.post('/api/ai/transcribe', async (req, res) => {
         const text = await transcribeAudio(filePath);
 
         await global.db.run(
-            'INSERT INTO ai_history (phone,type,request,response,model,timestamp) VALUES (?,?,?,?,?,?)',
+            'INSERT INTO ai_history (phone,type,request,response,model,timestamp) VALUES ($1,$2,$3,$4,$5,$6)',
             [phone, 'transcribe', audioUrl, text.slice(0, 1000), 'voxtral-mini-2507', ts()]
         ).catch(() => {});
 
@@ -665,7 +665,7 @@ app.post('/api/ai/sticker', async (req, res) => {
             {
                 name: 'gen-flux', host: 'gen.pollinations.ai', ext: 'jpg',
                 fetch: () => fetchImage(
-                    `https://gen.pollinations.ai/image/${pFull}?width=512&height=512&model=flux&nologo=true&seed=${seed}`,
+                    `https://gen.pollinations.ai/image/${pFull}$1width=512&height=512&model=flux&nologo=true&seed=${seed}`,
                     60000
                 )
             },
@@ -673,7 +673,7 @@ app.post('/api/ai/sticker', async (req, res) => {
             {
                 name: 'gen-turbo', host: 'gen.pollinations.ai', ext: 'jpg',
                 fetch: () => fetchImage(
-                    `https://gen.pollinations.ai/image/${pShort}?width=512&height=512&model=turbo&nologo=true&seed=${seed+1}`,
+                    `https://gen.pollinations.ai/image/${pShort}$1width=512&height=512&model=turbo&nologo=true&seed=${seed+1}`,
                     45000
                 )
             },
@@ -681,7 +681,7 @@ app.post('/api/ai/sticker', async (req, res) => {
             {
                 name: 'gen-nano', host: 'gen.pollinations.ai', ext: 'jpg',
                 fetch: () => fetchImage(
-                    `https://gen.pollinations.ai/image/${pShort}?width=512&height=512&model=nanobanana&nologo=true&seed=${seed+2}`,
+                    `https://gen.pollinations.ai/image/${pShort}$1width=512&height=512&model=nanobanana&nologo=true&seed=${seed+2}`,
                     40000
                 )
             },
@@ -689,7 +689,7 @@ app.post('/api/ai/sticker', async (req, res) => {
             {
                 name: 'img-pollinations', host: 'image.pollinations.ai', ext: 'jpg',
                 fetch: () => fetchImage(
-                    `https://image.pollinations.ai/prompt/${pShort}?width=512&height=512&model=flux&nologo=true&seed=${seed+3}`,
+                    `https://image.pollinations.ai/prompt/${pShort}$1width=512&height=512&model=flux&nologo=true&seed=${seed+3}`,
                     55000
                 )
             },
@@ -697,7 +697,7 @@ app.post('/api/ai/sticker', async (req, res) => {
             {
                 name: 'loremflickr', host: 'loremflickr.com', ext: 'jpg',
                 fetch: () => fetchImage(
-                    `https://loremflickr.com/512/512/${encodeURIComponent(ep.split(' ').slice(0,3).join(','))}?lock=${seed % 9999}`,
+                    `https://loremflickr.com/512/512/${encodeURIComponent(ep.split(' ').slice(0,3).join(','))}$1lock=${seed % 9999}`,
                     20000
                 )
             },
@@ -729,8 +729,8 @@ app.post('/api/ai/sticker', async (req, res) => {
 
         const reason = lastError?.response?.status
             ? `HTTP ${lastError.response.status}`
-            : (lastError?.code === 'ECONNABORTED' ? 'таймаут'
-            :  lastError?.code === 'ENOTFOUND'    ? 'нет сети'
+            : (lastError?.code === 'ECONNABORTED' $1 'таймаут'
+            :  lastError?.code === 'ENOTFOUND'    $1 'нет сети'
             :  lastError?.message?.slice(0, 60)   || 'неизвестно');
         console.error('🎨 Все провайдеры упали:', lastError?.message);
         res.status(503).json({
@@ -758,14 +758,14 @@ app.post('/api/ai/chat', async (req, res) => {
         const reply = await mistralChat([
             {
                 role: 'system',
-                content: `Ты БАЗА ИИ — умный ассистент в мессенджере БАЗА. Отвечай кратко, по-русски, дружелюбно.${ctxStr ? `\n\nКонтекст диалога:\n${ctxStr}` : ''}`
+                content: `Ты БАЗА ИИ — умный ассистент в мессенджере БАЗА. Отвечай кратко, по-русски, дружелюбно.${ctxStr $1 `\n\nКонтекст диалога:\n${ctxStr}` : ''}`
             },
             { role: 'user', content: message }
         ], { maxTokens: 600, temperature: 0.75 });
 
         await global.db.run(
-            'INSERT INTO ai_history (phone,type,request,response,model,timestamp) VALUES (?,?,?,?,?,?)',
-            [phone, 'chat', message.slice(0, 500), reply.slice(0, 1000), getAiProvider()?.name||'ai', ts()]
+            'INSERT INTO ai_history (phone,type,request,response,model,timestamp) VALUES ($1,$2,$3,$4,$5,$6)',
+            [phone, 'chat', message.slice(0, 500), reply.slice(0, 1000), getAiProvider()$1.name||'ai', ts()]
         ).catch(() => {});
 
         res.json({ reply });
@@ -784,7 +784,7 @@ app.post('/api/ai/summarize', async (req, res) => {
         if (err) return res.status(err.status).json({ error: err.error });
 
         const msgs = await global.db.all(
-            'SELECT senderName, text FROM messages WHERE chatId=? AND text IS NOT NULL ORDER BY timestamp DESC LIMIT 30',
+            'SELECT senderName, text FROM messages WHERE chatId=$1 AND text IS NOT NULL ORDER BY timestamp DESC LIMIT 30',
             [chatId]
         );
         if (!msgs.length) return res.json({ summary: 'Нет сообщений для анализа' });
@@ -814,7 +814,7 @@ io.use(async (socket, next) => {
     const phone = socket.handshake.auth?.phone;
     if (!phone) return next();
     try {
-        const user = await global.db?.get('SELECT isBanned FROM users WHERE phone=?', [phone]);
+        const user = await global.db?.get('SELECT isBanned FROM users WHERE phone=$1', [phone]);
         if (user?.isBanned) return next(new Error('BANNED'));
     } catch (_) {}
     next();
@@ -827,7 +827,7 @@ async function auditLog({ actorPhone = null, actorType = 'user', action, targetP
     try {
         const id = 'log_' + uid();
         await global.db.run(
-            'INSERT INTO audit_logs (id,actorPhone,actorType,action,targetPhone,severity,meta,ip,userAgent,timestamp) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO audit_logs (id,actorPhone,actorType,action,targetPhone,severity,meta,ip,userAgent,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
             [
                 id,
                 actorPhone,
@@ -887,7 +887,7 @@ io.on('connection', socket => {
             const totalUsers    = (await global.db.get('SELECT COUNT(*) c FROM users')).c;
             const onlineUsers   = (await global.db.get("SELECT COUNT(*) c FROM users WHERE status='online'")).c;
             const todayStart    = new Date(); todayStart.setHours(0, 0, 0, 0);
-            const messagesToday = (await global.db.get('SELECT COUNT(*) c FROM messages WHERE timestamp >= ?', [todayStart.toISOString()])).c;
+            const messagesToday = (await global.db.get('SELECT COUNT(*) c FROM messages WHERE timestamp >= $1', [todayStart.toISOString()])).c;
             const diskUsage     = (await getDirSize(UPLOADS_DIR)) + (await getDirSize(VOICE_DIR)) + (await getDirSize(VIDEO_DIR));
             const hourlyRows = await global.db.all(
                 IS_PG
@@ -916,7 +916,7 @@ io.on('connection', socket => {
     socket.on('admin:ban_user', async ({ key, phone, ban }) => {
         if (!isAdmin(key)) return socket.emit('admin:error', 'Нет прав');
         try {
-            await global.db.run('UPDATE users SET isBanned=? WHERE phone=?', [ban ? 1 : 0, phone]);
+            await global.db.run('UPDATE users SET isBanned=$1 WHERE phone=$2', [ban ? 1 : 0, phone]);
             socket.emit('admin:ban:ok', { phone, isBanned: ban ? 1 : 0 });
             await auditLog({
                 actorType: 'admin_key',
@@ -940,7 +940,7 @@ io.on('connection', socket => {
         try {
             const newVal = (isPremium !== undefined ? isPremium : premium) ? 1 : 0;
             const until = newVal ? (plan?.until || null) : null;
-            await global.db.run('UPDATE users SET isPremium=?, premiumUntil=? WHERE phone=?', [newVal, until, phone]);
+            await global.db.run('UPDATE users SET isPremium=$1, premiumUntil=$2 WHERE phone=$3', [newVal, until, phone]);
             socket.emit('admin:premium:ok', { phone, isPremium: newVal, plan });
             await auditLog({
                 actorType: 'admin_key',
@@ -962,12 +962,12 @@ io.on('connection', socket => {
             const where = [];
             const params = [];
 
-            if (action) { where.push('action LIKE ?'); params.push(`%${String(action).trim()}%`); }
-            if (severity) { where.push('severity = ?'); params.push(String(severity).trim()); }
-            if (actorPhone) { where.push('actorPhone = ?'); params.push(String(actorPhone).trim()); }
-            if (targetPhone) { where.push('targetPhone = ?'); params.push(String(targetPhone).trim()); }
-            if (since) { where.push('timestamp >= ?'); params.push(String(since).trim()); }
-            if (until) { where.push('timestamp <= ?'); params.push(String(until).trim()); }
+            if (action) { where.push('action LIKE $1'); params.push(`%${String(action).trim()}%`); }
+            if (severity) { where.push('severity = $1'); params.push(String(severity).trim()); }
+            if (actorPhone) { where.push('actorPhone = $1'); params.push(String(actorPhone).trim()); }
+            if (targetPhone) { where.push('targetPhone = $1'); params.push(String(targetPhone).trim()); }
+            if (since) { where.push('timestamp >= $1'); params.push(String(since).trim()); }
+            if (until) { where.push('timestamp <= $1'); params.push(String(until).trim()); }
 
             const w = where.length ? ('WHERE ' + where.join(' AND ')) : '';
             const totalRow = await global.db.get(`SELECT COUNT(*) c FROM audit_logs ${w}`, params);
@@ -987,12 +987,12 @@ io.on('connection', socket => {
         try {
             const sid = socketsByPhone[phone];
             if (sid) { const t = io.sockets.sockets.get(sid); if (t) t.disconnect(true); }
-            await global.db.run('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE senderPhone=?)', [phone]);
-            await global.db.run('DELETE FROM messages WHERE senderPhone=?', [phone]);
-            await global.db.run('DELETE FROM contacts WHERE userPhone=? OR contactPhone=?', [phone, phone]);
-            await global.db.run('DELETE FROM blocked_users WHERE userPhone=? OR blockedPhone=?', [phone, phone]);
-            await global.db.run('DELETE FROM group_members WHERE phone=?', [phone]);
-            await global.db.run('DELETE FROM users WHERE phone=?', [phone]);
+            await global.db.run('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE senderPhone=$1)', [phone]);
+            await global.db.run('DELETE FROM messages WHERE senderPhone=$1', [phone]);
+            await global.db.run('DELETE FROM contacts WHERE userPhone=$1 OR contactPhone=$2', [phone, phone]);
+            await global.db.run('DELETE FROM blocked_users WHERE userPhone=$1 OR blockedPhone=$2', [phone, phone]);
+            await global.db.run('DELETE FROM group_members WHERE phone=$1', [phone]);
+            await global.db.run('DELETE FROM users WHERE phone=$1', [phone]);
             delete socketsByPhone[phone];
             socket.emit('admin:delete_user:ok', { phone });
         } catch (e) { socket.emit('admin:error', 'Ошибка удаления'); }
@@ -1001,10 +1001,10 @@ io.on('connection', socket => {
     socket.on('admin:delete_message', async ({ key, messageId }) => {
         if (!isAdmin(key)) return socket.emit('admin:error', 'Нет прав');
         try {
-            const m = await global.db.get('SELECT chatId FROM messages WHERE id=?', [messageId]);
+            const m = await global.db.get('SELECT chatId FROM messages WHERE id=$1', [messageId]);
             if (!m) return socket.emit('admin:error', 'Сообщение не найдено');
-            await global.db.run('DELETE FROM reactions WHERE messageId=?', [messageId]);
-            await global.db.run('DELETE FROM messages WHERE id=?', [messageId]);
+            await global.db.run('DELETE FROM reactions WHERE messageId=$1', [messageId]);
+            await global.db.run('DELETE FROM messages WHERE id=$1', [messageId]);
             await emitToChat(m.chatId, 'message:deleted', { messageId, chatId: m.chatId });
             socket.emit('admin:delete_message:ok', { messageId });
         } catch (e) { socket.emit('admin:error', 'Ошибка'); }
@@ -1038,14 +1038,14 @@ io.on('connection', socket => {
             const e = (email || '').trim().toLowerCase();
             if (!p || !nickname || !password || !e) return socket.emit('register:error', 'Email обязателен для регистрации');
             if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return socket.emit('register:error', 'Некорректный формат email');
-            if (await global.db.get('SELECT 1 FROM users WHERE phone=?', [p]))
+            if (await global.db.get('SELECT 1 FROM users WHERE phone=$1', [p]))
                 return socket.emit('register:error', 'Этот номер уже занят!');
-            if (await global.db.get('SELECT 1 FROM users WHERE email=?', [e]))
+            if (await global.db.get('SELECT 1 FROM users WHERE email=$1', [e]))
                 return socket.emit('register:error', 'Email уже используется!');
 
             const code = genCode();
             await global.db.run(
-                'INSERT INTO users (phone,nickname,passwordHash,avatar,status,email,isVerified,verificationCode,isPremium,balance) VALUES (?,?,?,?,?,?,?,?,0,0.0)',
+                'INSERT INTO users (phone,nickname,passwordHash,avatar,status,email,isVerified,verificationCode,isPremium,balance) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0.0)',
                 [p, nickname, await bcrypt.hash(password, 10), generateAvatar(nickname), 'offline', e, 0, code]
             );
             console.log(`\n🔑 КОД ВЕРИФИКАЦИИ для ${p}: ${code}\n`);
@@ -1058,11 +1058,11 @@ io.on('connection', socket => {
     socket.on('auth:resend_code', async ({ phone }) => {
         try {
             const p = (phone || '').trim();
-            const user = await global.db.get('SELECT email,isVerified FROM users WHERE phone=?', [p]);
+            const user = await global.db.get('SELECT email,isVerified FROM users WHERE phone=$1', [p]);
             if (!user) return socket.emit('verify:error', 'Пользователь не найден');
             if (user.isVerified) return socket.emit('verify:success', { phone: p });
             const code = genCode();
-            await global.db.run('UPDATE users SET verificationCode=? WHERE phone=?', [code, p]);
+            await global.db.run('UPDATE users SET verificationCode=$1 WHERE phone=$2', [code, p]);
             console.log(`\n🔑 НОВЫЙ КОД для ${p}: ${code}\n`);
             if (user.email) {
                 const sent = await sendVerificationEmail(user.email, code);
@@ -1076,12 +1076,12 @@ io.on('connection', socket => {
     socket.on('auth:verify_email', async ({ phone, code }) => {
         try {
             const p = (phone || '').trim();
-            const user = await global.db.get('SELECT verificationCode,isVerified FROM users WHERE phone=?', [p]);
+            const user = await global.db.get('SELECT verificationCode,isVerified FROM users WHERE phone=$1', [p]);
             if (!user) return socket.emit('verify:error', 'Пользователь не найден');
             if (user.isVerified) return socket.emit('verify:success', { phone: p });
             if (user.verificationCode !== String(code).trim())
                 return socket.emit('verify:error', 'Неверный код. Попробуйте ещё раз.');
-            await global.db.run('UPDATE users SET isVerified=1, verificationCode=NULL WHERE phone=?', [p]);
+            await global.db.run('UPDATE users SET isVerified=1, verificationCode=NULL WHERE phone=$1', [p]);
             socket.emit('verify:success', { phone: p });
         } catch (err) { socket.emit('verify:error', 'Ошибка подтверждения'); }
     });
@@ -1093,7 +1093,7 @@ io.on('connection', socket => {
     socket.on('password:forgot', async ({ phone }) => {
         try {
             const p = (phone || '').trim();
-            const user = await global.db.get('SELECT email, isVerified FROM users WHERE phone=?', [p]);
+            const user = await global.db.get('SELECT email, isVerified FROM users WHERE phone=$1', [p]);
             
             if (!user) {
                 // Не раскрываем, существует ли пользователь — для безопасности
@@ -1110,12 +1110,12 @@ io.on('connection', socket => {
             
             // Сохраняем токен в БД
             await global.db.run(
-                'INSERT INTO password_reset_tokens (token, phone, expiresAt) VALUES (?, ?, ?)',
+                'INSERT INTO password_reset_tokens (token, phone, expiresAt) VALUES ($1, $2, $3)',
                 [token, p, expiresAt]
             );
             
             // Отправляем email со ссылкой
-            const resetLink = `http://${process.env.HOST || 'localhost'}:${PORT}/reset-password.html?token=${token}`;
+            const resetLink = `http://${process.env.HOST || 'localhost'}:${PORT}/reset-password.html$1token=${token}`;
             const sent = await sendPasswordResetEmail(user.email, resetLink);
             
             socket.emit('password:forgot:sent', { phone: p, emailSent: sent });
@@ -1137,7 +1137,7 @@ io.on('connection', socket => {
             if (!token) return socket.emit('password:token:invalid');
             
             const record = await global.db.get(
-                'SELECT phone, expiresAt, used FROM password_reset_tokens WHERE token=?',
+                'SELECT phone, expiresAt, used FROM password_reset_tokens WHERE token=$1',
                 [token]
             );
             
@@ -1145,7 +1145,7 @@ io.on('connection', socket => {
             if (record.used) return socket.emit('password:token:used');
             if (new Date(record.expiresAt) < new Date()) {
                 // Токен истёк — удаляем
-                await global.db.run('DELETE FROM password_reset_tokens WHERE token=?', [token]);
+                await global.db.run('DELETE FROM password_reset_tokens WHERE token=$1', [token]);
                 return socket.emit('password:token:expired');
             }
             
@@ -1170,14 +1170,14 @@ io.on('connection', socket => {
             }
             
             const record = await global.db.get(
-                'SELECT phone, expiresAt, used FROM password_reset_tokens WHERE token=?',
+                'SELECT phone, expiresAt, used FROM password_reset_tokens WHERE token=$1',
                 [token]
             );
             
             if (!record) return socket.emit('password:reset:error', 'Неверный токен');
             if (record.used) return socket.emit('password:reset:error', 'Токен уже использован');
             if (new Date(record.expiresAt) < new Date()) {
-                await global.db.run('DELETE FROM password_reset_tokens WHERE token=?', [token]);
+                await global.db.run('DELETE FROM password_reset_tokens WHERE token=$1', [token]);
                 return socket.emit('password:reset:error', 'Токен истёк');
             }
             
@@ -1185,10 +1185,10 @@ io.on('connection', socket => {
             const passwordHash = await bcrypt.hash(newPassword, 10);
             
             // Обновляем пароль в БД
-            await global.db.run('UPDATE users SET passwordHash=? WHERE phone=?', [passwordHash, record.phone]);
+            await global.db.run('UPDATE users SET passwordHash=$1 WHERE phone=$2', [passwordHash, record.phone]);
             
             // Помечаем токен как использованный
-            await global.db.run('UPDATE password_reset_tokens SET used=1 WHERE token=?', [token]);
+            await global.db.run('UPDATE password_reset_tokens SET used=1 WHERE token=$1', [token]);
             
             // Логируем событие
             await auditLog({
@@ -1209,7 +1209,7 @@ io.on('connection', socket => {
     socket.on('auth', async ({ phone, password }) => {
         try {
             const p = (phone || '').trim();
-            let user = await global.db.get('SELECT * FROM users WHERE phone=?', [p]);
+            let user = await global.db.get('SELECT * FROM users WHERE phone=$1', [p]);
             if (!user || !(await bcrypt.compare(password, user.passwordHash)))
                 return socket.emit('auth:error', 'Неверный номер или пароль');
             if (user.isBanned) return socket.emit('auth:error', 'Ваш аккаунт заблокирован.');
@@ -1219,12 +1219,12 @@ io.on('connection', socket => {
             if (user.isPremium && user.premiumUntil) {
                 const exp = Date.parse(user.premiumUntil);
                 if (!Number.isNaN(exp) && exp <= Date.now()) {
-                    await global.db.run('UPDATE users SET isPremium=0, premiumUntil=NULL WHERE phone=?', [p]).catch(()=>{});
+                    await global.db.run('UPDATE users SET isPremium=0, premiumUntil=NULL WHERE phone=$1', [p]).catch(()=>{});
                     user = { ...user, isPremium: 0, premiumUntil: null };
                 }
             }
 
-            await global.db.run('UPDATE users SET socketId=?,status=? WHERE phone=?', [socket.id, 'online', p]);
+            await global.db.run('UPDATE users SET socketId=$1,status=$2 WHERE phone=$3', [socket.id, 'online', p]);
             socket.phone    = p;
             socket.nickname = user.nickname;
             socket.avatar   = user.avatar;
@@ -1236,11 +1236,11 @@ io.on('connection', socket => {
 
             // История сообщений (личные + группы)
             const msgQ = `SELECT m.*,(SELECT json_group_array(json_object('emoji',emoji,'senderPhone',senderPhone)) FROM reactions WHERE messageId=m.id) as rxns FROM messages m`;
-            const direct = await global.db.all(msgQ + ` WHERE m.chatId LIKE ? ORDER BY m.id DESC LIMIT 200`, [`%${p}%`]);
-            const groups  = await global.db.all(`SELECT g.* FROM groups g JOIN group_members gm ON gm.groupId=g.id WHERE gm.phone=?`, [p]);
+            const direct = await global.db.all(msgQ + ` WHERE m.chatId LIKE $1 ORDER BY m.id DESC LIMIT 200`, [`%${p}%`]);
+            const groups  = await global.db.all(`SELECT g.* FROM groups g JOIN group_members gm ON gm.groupId=g.id WHERE gm.phone=$1`, [p]);
             let groupMsgs = [];
             for (const g of groups) {
-                const gm = await global.db.all(msgQ + ` WHERE m.chatId=? ORDER BY m.id DESC LIMIT 100`, [g.id]);
+                const gm = await global.db.all(msgQ + ` WHERE m.chatId=$1 ORDER BY m.id DESC LIMIT 100`, [g.id]);
                 groupMsgs.push(...gm);
             }
             const allMsgs = [...direct, ...groupMsgs].map(parseMsg).sort((a, b) => a.id < b.id ? -1 : 1);
@@ -1271,7 +1271,7 @@ io.on('connection', socket => {
     socket.on('auth:add_account', async ({ phone, password }) => {
         try {
             const p = (phone || '').trim();
-            const user = await global.db.get('SELECT * FROM users WHERE phone=?', [p]);
+            const user = await global.db.get('SELECT * FROM users WHERE phone=$1', [p]);
             if (!user || !(await bcrypt.compare(password, user.passwordHash)))
                 return socket.emit('auth:add_account:error', 'Неверный номер или пароль');
             if (user.isBanned) return socket.emit('auth:add_account:error', 'Аккаунт заблокирован');
@@ -1284,7 +1284,7 @@ io.on('connection', socket => {
     socket.on('auth:switch', async ({ phone, password }) => {
         try {
             const p = (phone || '').trim();
-            const user = await global.db.get('SELECT * FROM users WHERE phone=?', [p]);
+            const user = await global.db.get('SELECT * FROM users WHERE phone=$1', [p]);
             if (!user || !(await bcrypt.compare(password, user.passwordHash)))
                 return socket.emit('auth:switch:error', 'Неверные данные');
             if (user.isBanned) return socket.emit('auth:switch:error', 'Аккаунт заблокирован');
@@ -1292,13 +1292,13 @@ io.on('connection', socket => {
 
             // Обновить старый аккаунт — offline
             if (socket.phone && socket.phone !== p) {
-                await global.db.run('UPDATE users SET status=?,lastSeen=? WHERE phone=?', ['offline', ts(), socket.phone]);
+                await global.db.run('UPDATE users SET status=$1,lastSeen=$2 WHERE phone=$3', ['offline', ts(), socket.phone]);
                 delete socketsByPhone[socket.phone];
                 io.emit('user:status', { phone: socket.phone, status: 'offline', lastSeen: ts() });
             }
 
             // Активировать новый
-            await global.db.run('UPDATE users SET socketId=?,status=? WHERE phone=?', [socket.id, 'online', p]);
+            await global.db.run('UPDATE users SET socketId=$1,status=$2 WHERE phone=$3', [socket.id, 'online', p]);
             socket.phone     = p;
             socket.nickname  = user.nickname;
             socket.avatar    = user.avatar;
@@ -1309,11 +1309,11 @@ io.on('connection', socket => {
 
             // Перезагружаем чаты, группы, каналы для нового аккаунта
             const msgQ = `SELECT m.*,(SELECT json_group_array(json_object('emoji',emoji,'senderPhone',senderPhone)) FROM reactions WHERE messageId=m.id) as rxns FROM messages m`;
-            const direct = await global.db.all(msgQ + ` WHERE m.chatId LIKE ? ORDER BY m.id DESC LIMIT 200`, [`%${p}%`]);
-            const groups  = await global.db.all(`SELECT g.* FROM groups g JOIN group_members gm ON gm.groupId=g.id WHERE gm.phone=?`, [p]);
+            const direct = await global.db.all(msgQ + ` WHERE m.chatId LIKE $1 ORDER BY m.id DESC LIMIT 200`, [`%${p}%`]);
+            const groups  = await global.db.all(`SELECT g.* FROM groups g JOIN group_members gm ON gm.groupId=g.id WHERE gm.phone=$1`, [p]);
             let groupMsgs = [];
             for (const g of groups) {
-                const gm = await global.db.all(msgQ + ` WHERE m.chatId=? ORDER BY m.id DESC LIMIT 100`, [g.id]);
+                const gm = await global.db.all(msgQ + ` WHERE m.chatId=$1 ORDER BY m.id DESC LIMIT 100`, [g.id]);
                 groupMsgs.push(...gm);
             }
             const allMsgs = [...direct, ...groupMsgs].map(parseMsg).sort((a, b) => a.id < b.id ? -1 : 1);
@@ -1321,7 +1321,7 @@ io.on('connection', socket => {
             socket.emit('groups:list', groups);
 
             const myChannels = await global.db.all(
-                `SELECT c.*,cs.role as myRole FROM channels c JOIN channel_subscribers cs ON cs.channelId=c.id WHERE cs.phone=?`, [p]
+                `SELECT c.*,cs.role as myRole FROM channels c JOIN channel_subscribers cs ON cs.channelId=c.id WHERE cs.phone=$1`, [p]
             );
             socket.emit('channel:my:list', myChannels);
             io.emit('user:status', { phone: p, status: 'online' });
@@ -1333,7 +1333,7 @@ io.on('connection', socket => {
         const n = (nickname || '').trim();
         const b = (bio || '').trim();
         if (n) {
-            await global.db.run('UPDATE users SET nickname=?,bio=? WHERE phone=?', [n, b, socket.phone]);
+            await global.db.run('UPDATE users SET nickname=$1,bio=$2 WHERE phone=$3', [n, b, socket.phone]);
             socket.nickname = n;
         }
         socket.emit('profile:updated', { nickname: n, bio: b });
@@ -1341,7 +1341,7 @@ io.on('connection', socket => {
 
     socket.on('avatar:update', async ({ avatarData }) => {
         if (!socket.phone || !avatarData) return;
-        await global.db.run('UPDATE users SET avatar=? WHERE phone=?', [avatarData, socket.phone]);
+        await global.db.run('UPDATE users SET avatar=$1 WHERE phone=$2', [avatarData, socket.phone]);
         socket.avatar = avatarData;
         socket.emit('avatar:updated', { avatar: avatarData });
     });
@@ -1349,7 +1349,7 @@ io.on('connection', socket => {
     socket.on('profile:get', async ({ phone }) => {
         if (!socket.phone) return;
         const u = await global.db.get(
-            'SELECT phone,nickname,avatar,status,bio,isPremium,lastSeen FROM users WHERE phone=?',
+            'SELECT phone,nickname,avatar,status,bio,isPremium,lastSeen FROM users WHERE phone=$1',
             [phone || socket.phone]
         );
         if (u) socket.emit('profile:data', u);
@@ -1362,9 +1362,9 @@ io.on('connection', socket => {
         try {
             const p = (phone || '').trim();
             if (p === socket.phone) return socket.emit('contact:add:error', 'Нельзя добавить себя');
-            const user = await global.db.get('SELECT phone,nickname,avatar FROM users WHERE phone=?', [p]);
+            const user = await global.db.get('SELECT phone,nickname,avatar FROM users WHERE phone=$1', [p]);
             if (!user) return socket.emit('contact:add:error', 'Пользователь не найден');
-            await global.db.run('INSERT OR IGNORE INTO contacts (userPhone,contactPhone,nickname) VALUES (?,?,?)',
+            await global.db.run('INSERT OR IGNORE INTO contacts (userPhone,contactPhone,nickname) VALUES ($1,$2,$3)',
                 [socket.phone, p, user.nickname]);
             const chatId = [socket.phone, p].sort().join('_');
             socket.emit('chat:created', { id: chatId, name: user.nickname, phone: user.phone, avatar: user.avatar });
@@ -1374,8 +1374,8 @@ io.on('connection', socket => {
     socket.on('contact:search', async query => {
         const q = (query || '').trim();
         const r = await global.db.all(
-            'SELECT phone,nickname,avatar,status FROM users WHERE (phone LIKE ? OR nickname LIKE ?) AND phone!=? LIMIT 20',
-            [q ? `%${q}%` : '%', q ? `%${q}%` : '%', socket.phone]
+            'SELECT phone,nickname,avatar,status FROM users WHERE (phone LIKE $1 OR nickname LIKE $2) AND phone!=$3 LIMIT 20',
+            [q ? `%${q}%` : '%', q $1 `%${q}%` : '%', socket.phone]
         );
         socket.emit('contact:search:results', r);
     });
@@ -1391,7 +1391,7 @@ io.on('connection', socket => {
         // ── @упоминания ────────────────────────────────────────────────────────
         const mentions = (text.match(/@([a-zA-Zа-яА-ЯёЁ0-9_]+)/g) || []).map(m => m.slice(1));
         for (const nick of mentions) {
-            const mentioned = await global.db.get('SELECT phone FROM users WHERE nickname=?', [nick]).catch(()=>null);
+            const mentioned = await global.db.get('SELECT phone FROM users WHERE nickname=$1', [nick]).catch(()=>null);
             if (mentioned && mentioned.phone !== socket.phone) {
                 const sid = socketsByPhone[mentioned.phone];
                 if (sid) io.to(sid).emit('mention:received', {
@@ -1406,13 +1406,13 @@ io.on('connection', socket => {
             const recipientPhone = chatId.split('_').find(p => p !== socket.phone);
             if (recipientPhone) {
                 const recip = await global.db.get(
-                    'SELECT autoReply,autoReplyText,status FROM users WHERE phone=?', [recipientPhone]
+                    'SELECT autoReply,autoReplyText,status FROM users WHERE phone=$1', [recipientPhone]
                 ).catch(()=>null);
                 if (recip?.autoReply && recip.status !== 'online') {
                     const replyText = recip.autoReplyText || '🤖 Сейчас не в сети. Отвечу позже!';
                     const autoMsg = buildMsg(recipientPhone, '🤖 Автоответ', chatId, { text: replyText });
                     await global.db.run(
-                        'INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp) VALUES (?,?,?,?,?,?)',
+                        'INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp) VALUES ($1,$2,$3,$4,$5,$6)',
                         [autoMsg.id, chatId, recipientPhone, '🤖 Автоответ', replyText, autoMsg.timestamp]
                     ).catch(()=>{});
                     await emitToChat(chatId, 'message:receive', { chatId, message: autoMsg });
@@ -1422,12 +1422,12 @@ io.on('connection', socket => {
 
         // @бот — БАЗА ИИ на Mistral (только для Плюс)
         if (text.trim().startsWith('@бот') && getAiProvider()) {
-            const userRow = await global.db.get('SELECT isPremium FROM users WHERE phone=?', [socket.phone]).catch(() => null);
+            const userRow = await global.db.get('SELECT isPremium FROM users WHERE phone=$1', [socket.phone]).catch(() => null);
             if (userRow?.isPremium) {
                 (async () => {
                     try {
                         const recent = await global.db.all(
-                            'SELECT senderName,text FROM messages WHERE chatId=? AND text IS NOT NULL ORDER BY timestamp DESC LIMIT 10',
+                            'SELECT senderName,text FROM messages WHERE chatId=$1 AND text IS NOT NULL ORDER BY timestamp DESC LIMIT 10',
                             [chatId]
                         );
                         const ctx = recent.reverse().map(m => `${m.senderName}: ${m.text}`).join('\n');
@@ -1440,7 +1440,7 @@ io.on('connection', socket => {
 
                         const botMsg = buildMsg('ai_bot', '🤖 БАЗА ИИ', chatId, { text: aiText, replyTo: msg.id });
                         await global.db.run(
-                            'INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp,replyTo) VALUES (?,?,?,?,?,?,?)',
+                            'INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp,replyTo) VALUES ($1,$2,$3,$4,$5,$6,$7)',
                             [botMsg.id, chatId, 'ai_bot', '🤖 БАЗА ИИ', aiText, botMsg.timestamp, msg.id]
                         );
                         await emitToChat(chatId, 'message:receive', { chatId, message: botMsg });
@@ -1486,7 +1486,7 @@ io.on('connection', socket => {
         if (!chatId || !stickerUrl) return;
         const msg = buildMsg(socket.phone, socket.nickname, chatId, { text: '🎭 Стикер', fileUrl: stickerUrl, isSticker: true });
         await global.db.run(
-            'INSERT INTO messages (id,chatId,senderPhone,senderName,text,fileUrl,timestamp) VALUES (?,?,?,?,?,?,?)',
+            'INSERT INTO messages (id,chatId,senderPhone,senderName,text,fileUrl,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7)',
             [msg.id, msg.chatId, msg.senderPhone, msg.senderName, msg.text, msg.fileUrl, msg.timestamp]
         );
         await emitToChat(chatId, 'message:receive', { chatId, message: msg });
@@ -1494,19 +1494,19 @@ io.on('connection', socket => {
 
     socket.on('message:edit', async ({ messageId, newText }) => {
         if (!newText?.trim()) return;
-        const m = await global.db.get('SELECT * FROM messages WHERE id=?', [messageId]);
+        const m = await global.db.get('SELECT * FROM messages WHERE id=$1', [messageId]);
         if (!m || m.senderPhone !== socket.phone) return;
         const editedAt = ts();
-        await global.db.run('UPDATE messages SET text=?,isEdited=1,editedAt=? WHERE id=?', [newText.trim(), editedAt, messageId]);
+        await global.db.run('UPDATE messages SET text=$1,isEdited=1,editedAt=$2 WHERE id=$3', [newText.trim(), editedAt, messageId]);
         await emitToChat(m.chatId, 'message:updated', { messageId, chatId: m.chatId, newText: newText.trim(), isEdited: 1, editedAt });
     });
 
     socket.on('message:delete', async ({ messageId, deleteForAll }) => {
-        const m = await global.db.get('SELECT * FROM messages WHERE id=?', [messageId]);
+        const m = await global.db.get('SELECT * FROM messages WHERE id=$1', [messageId]);
         if (!m) return;
         if (deleteForAll && m.senderPhone === socket.phone) {
-            await global.db.run('DELETE FROM reactions WHERE messageId=?', [messageId]);
-            await global.db.run('DELETE FROM messages WHERE id=?', [messageId]);
+            await global.db.run('DELETE FROM reactions WHERE messageId=$1', [messageId]);
+            await global.db.run('DELETE FROM messages WHERE id=$1', [messageId]);
             await emitToChat(m.chatId, 'message:deleted', { messageId, chatId: m.chatId });
         } else {
             socket.emit('message:deleted', { messageId, chatId: m.chatId });
@@ -1516,7 +1516,7 @@ io.on('connection', socket => {
     socket.on('message:forward', async ({ messageId, toChatId }) => {
         if (!socket.phone || !messageId || !toChatId) return;
         const orig = await global.db.get(
-            'SELECT text,fileUrl,audioUrl,videoUrl,senderName FROM messages WHERE id=?',
+            'SELECT text,fileUrl,audioUrl,videoUrl,senderName FROM messages WHERE id=$1',
             [messageId]
         );
         if (!orig) return socket.emit('error', 'Сообщение не найдено');
@@ -1546,10 +1546,10 @@ io.on('connection', socket => {
     socket.on('message:pin', async ({ messageId, chatId }) => {
         if (!socket.phone || !messageId || !chatId) return;
         // Только admin группы или участник личного чата
-        const msg = await global.db.get('SELECT id,text,senderName FROM messages WHERE id=? AND chatId=?', [messageId, chatId]);
+        const msg = await global.db.get('SELECT id,text,senderName FROM messages WHERE id=$1 AND chatId=$2', [messageId, chatId]);
         if (!msg) return;
         await global.db.run(
-            'INSERT OR REPLACE INTO pinned_messages (chatId,messageId,pinnedBy,pinnedAt) VALUES (?,?,?,?)',
+            'INSERT OR REPLACE INTO pinned_messages (chatId,messageId,pinnedBy,pinnedAt) VALUES ($1,$2,$3,$4)',
             [chatId, messageId, socket.phone, ts()]
         );
         await emitToChat(chatId, 'message:pinned', { chatId, messageId, text: msg.text, senderName: msg.senderName, pinnedBy: socket.nickname });
@@ -1557,7 +1557,7 @@ io.on('connection', socket => {
  
     socket.on('message:unpin', async ({ chatId }) => {
         if (!socket.phone || !chatId) return;
-        await global.db.run('DELETE FROM pinned_messages WHERE chatId=?', [chatId]);
+        await global.db.run('DELETE FROM pinned_messages WHERE chatId=$1', [chatId]);
         await emitToChat(chatId, 'message:unpinned', { chatId });
     });
  
@@ -1572,20 +1572,20 @@ io.on('connection', socket => {
 
     socket.on('message:read', async ({ chatId }) => {
         if (!chatId || !socket.phone) return;
-        await global.db.run('UPDATE messages SET isRead=1 WHERE chatId=? AND senderPhone!=? AND isRead=0', [chatId, socket.phone]);
+        await global.db.run('UPDATE messages SET isRead=1 WHERE chatId=$1 AND senderPhone!=$2 AND isRead=0', [chatId, socket.phone]);
         const senders = chatId.startsWith('g_')
-            ? (await global.db.all('SELECT phone FROM group_members WHERE groupId=?', [chatId])).map(r => r.phone).filter(p => p !== socket.phone)
+            ? (await global.db.all('SELECT phone FROM group_members WHERE groupId=$1', [chatId])).map(r => r.phone).filter(p => p !== socket.phone)
             : chatId.split('_').filter(p => p !== socket.phone);
         senders.forEach(p => { const s = socketsByPhone[p]; if (s) io.to(s).emit('message:read:ack', { chatId, readerPhone: socket.phone }); });
     });
 
     socket.on('reaction:toggle', async ({ messageId, emoji }) => {
-        const m = await global.db.get('SELECT chatId FROM messages WHERE id=?', [messageId]);
+        const m = await global.db.get('SELECT chatId FROM messages WHERE id=$1', [messageId]);
         if (!m) return;
-        const has = await global.db.get('SELECT 1 FROM reactions WHERE messageId=? AND senderPhone=? AND emoji=?', [messageId, socket.phone, emoji]);
-        if (has) await global.db.run('DELETE FROM reactions WHERE messageId=? AND senderPhone=? AND emoji=?', [messageId, socket.phone, emoji]);
-        else     await global.db.run('INSERT OR IGNORE INTO reactions (messageId,senderPhone,emoji) VALUES (?,?,?)', [messageId, socket.phone, emoji]);
-        const reactions = await global.db.all('SELECT emoji,senderPhone FROM reactions WHERE messageId=?', [messageId]);
+        const has = await global.db.get('SELECT 1 FROM reactions WHERE messageId=$1 AND senderPhone=$2 AND emoji=$3', [messageId, socket.phone, emoji]);
+        if (has) await global.db.run('DELETE FROM reactions WHERE messageId=$1 AND senderPhone=$2 AND emoji=$3', [messageId, socket.phone, emoji]);
+        else     await global.db.run('INSERT OR IGNORE INTO reactions (messageId,senderPhone,emoji) VALUES ($1,$2,$3)', [messageId, socket.phone, emoji]);
+        const reactions = await global.db.all('SELECT emoji,senderPhone FROM reactions WHERE messageId=$1', [messageId]);
         await emitToChat(m.chatId, 'reaction:update', { messageId, reactions });
     });
 
@@ -1604,7 +1604,7 @@ io.on('connection', socket => {
             if (!chatId.startsWith('g_')) {
                 const phones = chatId.split('_').filter(p => p !== socket.phone);
                 if (phones.length > 0) {
-                    const other = await global.db.get('SELECT phone,nickname,avatar,status,isPremium FROM users WHERE phone=?', [phones[0]]);
+                    const other = await global.db.get('SELECT phone,nickname,avatar,status,isPremium FROM users WHERE phone=$1', [phones[0]]);
                     if (other) socket.emit('chat:user:info', { chatId, user: other });
                 }
             }
@@ -1612,18 +1612,18 @@ io.on('connection', socket => {
     });
 
     socket.on('chat:clear', async ({ chatId }) => {
-        await global.db.run('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE chatId=?)', [chatId]);
-        await global.db.run('DELETE FROM messages WHERE chatId=?', [chatId]);
+        await global.db.run('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE chatId=$1)', [chatId]);
+        await global.db.run('DELETE FROM messages WHERE chatId=$1', [chatId]);
         await emitToChat(chatId, 'chat:cleared', { chatId });
     });
 
     socket.on('chat:delete', async ({ chatId }) => {
-        await global.db.run('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE chatId=?)', [chatId]);
-        await global.db.run('DELETE FROM messages WHERE chatId=?', [chatId]);
+        await global.db.run('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE chatId=$1)', [chatId]);
+        await global.db.run('DELETE FROM messages WHERE chatId=$1', [chatId]);
         if (!chatId.startsWith('g_')) {
             const other = chatId.split('_').find(p => p !== socket.phone);
             if (other) await global.db.run(
-                'DELETE FROM contacts WHERE (userPhone=? AND contactPhone=?) OR (userPhone=? AND contactPhone=?)',
+                'DELETE FROM contacts WHERE (userPhone=$1 AND contactPhone=$2) OR (userPhone=$3 AND contactPhone=$4)',
                 [socket.phone, other, other, socket.phone]
             );
         }
@@ -1631,12 +1631,12 @@ io.on('connection', socket => {
     });
 
     socket.on('user:block', async ({ targetPhone }) => {
-        await global.db.run('INSERT OR IGNORE INTO blocked_users (userPhone,blockedPhone) VALUES (?,?)', [socket.phone, targetPhone]);
+        await global.db.run('INSERT OR IGNORE INTO blocked_users (userPhone,blockedPhone) VALUES ($1,$2)', [socket.phone, targetPhone]);
         socket.emit('user:blocked', { targetPhone });
     });
 
     socket.on('user:unblock', async ({ targetPhone }) => {
-        await global.db.run('DELETE FROM blocked_users WHERE userPhone=? AND blockedPhone=?', [socket.phone, targetPhone]);
+        await global.db.run('DELETE FROM blocked_users WHERE userPhone=$1 AND blockedPhone=$2', [socket.phone, targetPhone]);
         socket.emit('user:unblocked', { targetPhone });
     });
 
@@ -1663,10 +1663,10 @@ io.on('connection', socket => {
     socket.on('draft:save', async ({ chatId, text }) => {
         if (!socket.phone || !chatId) return;
         if (!text?.trim()) {
-            await global.db.run('DELETE FROM drafts WHERE phone=? AND chatId=?', [socket.phone, chatId]).catch(() => {});
+            await global.db.run('DELETE FROM drafts WHERE phone=$1 AND chatId=$2', [socket.phone, chatId]).catch(() => {});
         } else {
             await global.db.run(
-                'INSERT OR REPLACE INTO drafts (phone,chatId,text,updatedAt) VALUES (?,?,?,?)',
+                'INSERT OR REPLACE INTO drafts (phone,chatId,text,updatedAt) VALUES ($1,$2,$3,$4)',
                 [socket.phone, chatId, text.trim().slice(0, 4000), ts()]
             ).catch(() => {});
         }
@@ -1675,15 +1675,15 @@ io.on('connection', socket => {
     socket.on('draft:get', async ({ chatId }) => {
         if (!socket.phone || !chatId) return;
         const row = await global.db.get(
-            'SELECT text FROM drafts WHERE phone=? AND chatId=?', [socket.phone, chatId]
+            'SELECT text FROM drafts WHERE phone=$1 AND chatId=$2', [socket.phone, chatId]
         ).catch(() => null);
-        socket.emit('draft:data', { chatId, text: row?.text || '' });
+        socket.emit('draft:data', { chatId, text: row$1.text || '' });
     });
  
     socket.on('draft:get_all', async () => {
         if (!socket.phone) return;
         const rows = await global.db.all(
-            'SELECT chatId,text,updatedAt FROM drafts WHERE phone=? ORDER BY updatedAt DESC',
+            'SELECT chatId,text,updatedAt FROM drafts WHERE phone=$1 ORDER BY updatedAt DESC',
             [socket.phone]
         ).catch(() => []);
         socket.emit('draft:all', rows);
@@ -1694,7 +1694,7 @@ io.on('connection', socket => {
         // Динамический IN() — генерируем плейсхолдеры (? для SQLite, $1,$2 для PG)
         const ph = IS_PG
             ? phones.map((_, i) => `$${i + 1}`).join(',')
-            : phones.map(() => '?').join(',');
+            : phones.map(() => '$1').join(',');
         const rows = await global.db.all(
             `SELECT phone,status,"lastSeen" FROM users WHERE phone IN (${ph})`, phones
         );
@@ -1709,10 +1709,10 @@ io.on('connection', socket => {
             if (!name?.trim()) return socket.emit('group:error', 'Введите название');
             const id = 'g_' + uid();
             const members = [...new Set([socket.phone, ...(memberPhones || [])])];
-            await global.db.run('INSERT INTO groups (id,name,avatar,createdBy) VALUES (?,?,?,?)',
+            await global.db.run('INSERT INTO groups (id,name,avatar,createdBy) VALUES ($1,$2,$3,$4)',
                 [id, name.trim(), generateAvatar(name), socket.phone]);
             for (const p of members)
-                await global.db.run('INSERT OR IGNORE INTO group_members (groupId,phone,role) VALUES (?,?,?)',
+                await global.db.run('INSERT OR IGNORE INTO group_members (groupId,phone,role) VALUES ($1,$2,$3)',
                     [id, p, p === socket.phone ? 'admin' : 'member']);
             const info = { id, name: name.trim(), avatar: generateAvatar(name), createdBy: socket.phone, isGroup: true, members };
             members.forEach(p => { const s = socketsByPhone[p]; if (s) io.to(s).emit('group:created', info); });
@@ -1720,7 +1720,7 @@ io.on('connection', socket => {
     });
 
     socket.on('group:leave', async ({ groupId }) => {
-        await global.db.run('DELETE FROM group_members WHERE groupId=? AND phone=?', [groupId, socket.phone]);
+        await global.db.run('DELETE FROM group_members WHERE groupId=$1 AND phone=$2', [groupId, socket.phone]);
         await emitToChat(groupId, 'group:member:left', { groupId, phone: socket.phone });
         socket.emit('chat:deleted', { chatId: groupId });
     });
@@ -1767,7 +1767,7 @@ io.on('connection', socket => {
     socket.on('videocall:end', ({ callId }) => {
         const c = activeCall[callId]; if (!c) return;
         [c.initiatorSocket, c.recipientSocket].forEach(s => io.to(s).emit('videocall:ended', { callId }));
-        global.db.run('INSERT OR IGNORE INTO calls (callId,initiatorPhone,recipientPhone,type,startTime,endTime,status) VALUES (?,?,?,?,?,?,?)',
+        global.db.run('INSERT OR IGNORE INTO calls (callId,initiatorPhone,recipientPhone,type,startTime,endTime,status) VALUES ($1,$2,$3,$4,$5,$6,$7)',
             [callId, c.initiatorPhone, c.recipientPhone, c.type, c.startTime, ts(), 'completed']).catch(() => {});
         delete activeCall[callId];
     });
@@ -1779,9 +1779,9 @@ io.on('connection', socket => {
         if (!socket.phone) return;
         groupCalls[callId] = { groupId, members: new Set([socket.phone]), mediaStatus: new Map() };
         try {
-            const chat = await global.db.get('SELECT name FROM groups WHERE id=?', [groupId]);
+            const chat = await global.db.get('SELECT name FROM groups WHERE id=$1', [groupId]);
             const groupName = chat?.name || 'Группа';
-            const dbMembers = await global.db.all('SELECT phone FROM group_members WHERE groupId=?', [groupId]);
+            const dbMembers = await global.db.all('SELECT phone FROM group_members WHERE groupId=$1', [groupId]);
             dbMembers.forEach(m => {
                 if (m.phone === socket.phone) return;
                 const sid = socketsByPhone[m.phone];
@@ -1877,7 +1877,7 @@ io.on('connection', socket => {
             // Сохранить аватарку если передана
             let avatarUrl = null;
             if (avatarData?.startsWith('data:')) {
-                const ext = avatarData.includes('png') ? 'png' : 'jpg';
+                const ext = avatarData.includes('png') $1 'png' : 'jpg';
                 const fname = 'ch-avatar-' + id + '.' + ext;
                 await fs.writeFile(path.join(UPLOADS_DIR, fname), Buffer.from(avatarData.split(',')[1], 'base64'));
                 avatarUrl = '/uploads/' + fname;
@@ -1885,25 +1885,25 @@ io.on('connection', socket => {
             // Генерировать inviteToken для приватных каналов
             const inviteToken = (isPublic !== false && isPublic !== 0) ? null : require('crypto').randomBytes(12).toString('hex');
             await global.db.run(
-                'INSERT INTO channels (id,name,description,createdBy,isPublic,avatar,inviteToken) VALUES (?,?,?,?,?,?,?)',
+                'INSERT INTO channels (id,name,description,createdBy,isPublic,avatar,inviteToken) VALUES ($1,$2,$3,$4,$5,$6,$7)',
                 [id, name.trim(), description || '', socket.phone, isPublic !== false ? 1 : 0, avatarUrl, inviteToken]
             );
-            await global.db.run('INSERT INTO channel_subscribers (channelId,phone,role) VALUES (?,?,?)', [id, socket.phone, 'owner']);
-            const ch = await global.db.get('SELECT * FROM channels WHERE id=?', [id]);
+            await global.db.run('INSERT INTO channel_subscribers (channelId,phone,role) VALUES ($1,$2,$3)', [id, socket.phone, 'owner']);
+            const ch = await global.db.get('SELECT * FROM channels WHERE id=$1', [id]);
             socket.emit('channel:created', { ...ch, myRole: 'owner', subscriberCount: 1 });
         } catch (e) { console.error('channel:create', e); socket.emit('channel:error', 'Ошибка создания'); }
     });
 
     socket.on('channel:subscribe', async ({ channelId }) => {
         if (!socket.phone) return;
-        const existing = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=? AND phone=?', [channelId, socket.phone]);
+        const existing = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=$1 AND phone=$2', [channelId, socket.phone]);
         if (existing) {
-            await global.db.run('DELETE FROM channel_subscribers WHERE channelId=? AND phone=?', [channelId, socket.phone]);
-            await global.db.run('UPDATE channels SET subscriberCount=MAX(0,subscriberCount-1) WHERE id=?', [channelId]);
+            await global.db.run('DELETE FROM channel_subscribers WHERE channelId=$1 AND phone=$2', [channelId, socket.phone]);
+            await global.db.run('UPDATE channels SET subscriberCount=MAX(0,subscriberCount-1) WHERE id=$1', [channelId]);
             socket.emit('channel:subscribed', { channelId, subscribed: false });
         } else {
-            await global.db.run('INSERT OR IGNORE INTO channel_subscribers (channelId,phone,role) VALUES (?,?,?)', [channelId, socket.phone, 'subscriber']);
-            await global.db.run('UPDATE channels SET subscriberCount=subscriberCount+1 WHERE id=?', [channelId]);
+            await global.db.run('INSERT OR IGNORE INTO channel_subscribers (channelId,phone,role) VALUES ($1,$2,$3)', [channelId, socket.phone, 'subscriber']);
+            await global.db.run('UPDATE channels SET subscriberCount=subscriberCount+1 WHERE id=$1', [channelId]);
             socket.emit('channel:subscribed', { channelId, subscribed: true, role: 'subscriber' });
         }
     });
@@ -1920,11 +1920,11 @@ io.on('connection', socket => {
     socket.on('channel:post:create', async ({ channelId, text, fileData, videoData }) => {
         if (!socket.phone) return;
         try {
-            const sub = await global.db.get('SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?', [channelId, socket.phone]);
+            const sub = await global.db.get('SELECT role FROM channel_subscribers WHERE channelId=$1 AND phone=$2', [channelId, socket.phone]);
             if (!sub || !['admin', 'editor'].includes(sub.role)) return socket.emit('channel:error', 'Нет прав для публикации');
             let fileUrl = null, videoUrl = null;
             if (fileData?.startsWith('data:')) {
-                const ext = fileData.includes('png') ? 'png' : fileData.includes('gif') ? 'gif' : 'jpg';
+                const ext = fileData.includes('png') $1 'png' : fileData.includes('gif') $1 'gif' : 'jpg';
                 const fname = 'post-' + uid() + '.' + ext;
                 await fs.writeFile(path.join(UPLOADS_DIR, fname), Buffer.from(fileData.split(',')[1], 'base64'));
                 fileUrl = '/uploads/' + fname;
@@ -1936,9 +1936,9 @@ io.on('connection', socket => {
             }
             const id = 'cp_' + uid();
             const post = { id, channelId, authorPhone: socket.phone, authorName: socket.nickname, text: text || null, fileUrl, videoUrl, views: 0, timestamp: ts(), commentCount: 0 };
-            await global.db.run('INSERT INTO channel_posts (id,channelId,authorPhone,authorName,text,fileUrl,videoUrl,views,timestamp) VALUES (?,?,?,?,?,?,?,0,?)',
+            await global.db.run('INSERT INTO channel_posts (id,channelId,authorPhone,authorName,text,fileUrl,videoUrl,views,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7,0,$8)',
                 [id, channelId, socket.phone, socket.nickname, text || null, fileUrl, videoUrl, ts()]);
-            const subs = await global.db.all('SELECT phone, notifications FROM channel_subscribers WHERE channelId=?', [channelId]);
+            const subs = await global.db.all('SELECT phone, notifications FROM channel_subscribers WHERE channelId=$1', [channelId]);
             subs.forEach(s => {
                 const sid = socketsByPhone[s.phone];
                 if (sid) {
@@ -1950,46 +1950,46 @@ io.on('connection', socket => {
     });
 
     socket.on('channel:comments', async ({ postId }) => {
-        const rows = await global.db.all('SELECT * FROM channel_comments WHERE postId=? ORDER BY timestamp ASC LIMIT 200', [postId]);
+        const rows = await global.db.all('SELECT * FROM channel_comments WHERE postId=$1 ORDER BY timestamp ASC LIMIT 200', [postId]);
         socket.emit('channel:comments:list', { postId, comments: rows });
     });
 
     socket.on('channel:comment:add', async ({ postId, text }) => {
         if (!socket.phone || !text?.trim()) return;
-        const post = await global.db.get('SELECT channelId FROM channel_posts WHERE id=?', [postId]);
+        const post = await global.db.get('SELECT channelId FROM channel_posts WHERE id=$1', [postId]);
         if (!post) return;
-        const sub = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=? AND phone=?', [post.channelId, socket.phone]);
+        const sub = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=$1 AND phone=$2', [post.channelId, socket.phone]);
         if (!sub) return socket.emit('channel:error', 'Нужно подписаться на канал');
         const id = 'cc_' + uid();
         const comment = { id, postId, channelId: post.channelId, senderPhone: socket.phone, senderName: socket.nickname, text: text.trim(), timestamp: ts() };
-        await global.db.run('INSERT INTO channel_comments (id,postId,channelId,senderPhone,senderName,text,timestamp) VALUES (?,?,?,?,?,?,?)',
+        await global.db.run('INSERT INTO channel_comments (id,postId,channelId,senderPhone,senderName,text,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7)',
             [id, postId, post.channelId, socket.phone, socket.nickname, text.trim(), ts()]);
-        const subs = await global.db.all('SELECT phone FROM channel_subscribers WHERE channelId=?', [post.channelId]);
+        const subs = await global.db.all('SELECT phone FROM channel_subscribers WHERE channelId=$1', [post.channelId]);
         subs.forEach(s => { const sid = socketsByPhone[s.phone]; if (sid) io.to(sid).emit('channel:comment:new', { postId, channelId: post.channelId, comment }); });
     });
 
     socket.on('channel:post:view', async ({ postId }) => {
-        await global.db.run('UPDATE channel_posts SET views=views+1 WHERE id=?', [postId]).catch(() => {});
+        await global.db.run('UPDATE channel_posts SET views=views+1 WHERE id=$1', [postId]).catch(() => {});
     });
 
     // ── РЕАКЦИИ НА ПОСТЫ ─────────────────────────────────────────────────────
     socket.on('channel:post:react', async ({ postId, emoji }) => {
         if (!socket.phone || !postId || !emoji) return;
         try {
-            const post = await global.db.get('SELECT channelId FROM channel_posts WHERE id=?', [postId]);
+            const post = await global.db.get('SELECT channelId FROM channel_posts WHERE id=$1', [postId]);
             if (!post) return;
             // Проверяем подписку
-            const sub = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=? AND phone=?', [post.channelId, socket.phone]);
+            const sub = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=$1 AND phone=$2', [post.channelId, socket.phone]);
             if (!sub) return socket.emit('channel:error', 'Нужно подписаться на канал');
 
             const existing = await global.db.get(
-                'SELECT 1 FROM channel_post_reactions WHERE postId=? AND phone=? AND emoji=?',
+                'SELECT 1 FROM channel_post_reactions WHERE postId=$1 AND phone=$2 AND emoji=$3',
                 [postId, socket.phone, emoji]
             );
             if (existing) {
-                await global.db.run('DELETE FROM channel_post_reactions WHERE postId=? AND phone=? AND emoji=?', [postId, socket.phone, emoji]);
+                await global.db.run('DELETE FROM channel_post_reactions WHERE postId=$1 AND phone=$2 AND emoji=$3', [postId, socket.phone, emoji]);
             } else {
-                await global.db.run('INSERT OR IGNORE INTO channel_post_reactions (postId,phone,emoji) VALUES (?,?,?)', [postId, socket.phone, emoji]);
+                await global.db.run('INSERT OR IGNORE INTO channel_post_reactions (postId,phone,emoji) VALUES ($1,$2,$3)', [postId, socket.phone, emoji]);
             }
             // Агрегируем реакции
             const reactions = await global.db.all(
@@ -2002,7 +2002,7 @@ io.on('connection', socket => {
                 mine: (r.phones || '').split(',').includes(socket.phone)
             }));
             // Рассылаем всем подписчикам
-            const subs = await global.db.all('SELECT phone FROM channel_subscribers WHERE channelId=?', [post.channelId]);
+            const subs = await global.db.all('SELECT phone FROM channel_subscribers WHERE channelId=$1', [post.channelId]);
             subs.forEach(s => {
                 const sid = socketsByPhone[s.phone];
                 if (sid) io.to(sid).emit('channel:post:reactions:update', { postId, reactions: reactionList, myPhone: s.phone });
@@ -2034,7 +2034,7 @@ io.on('connection', socket => {
         if (!socket.phone) return;
         try {
             const myRole = await global.db.get(
-                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                'SELECT role FROM channel_subscribers WHERE channelId=$1 AND phone=$2',
                 [channelId, socket.phone]
             );
             if (!myRole || !['owner','admin'].includes(myRole.role))
@@ -2056,26 +2056,26 @@ io.on('connection', socket => {
         try {
             // Только владелец может управлять ролями
             const myRow = await global.db.get(
-                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                'SELECT role FROM channel_subscribers WHERE channelId=$1 AND phone=$2',
                 [channelId, socket.phone]
             );
             if (!myRow || myRow.role !== 'owner')
                 return socket.emit('channel:error', 'Только владелец может назначать администраторов');
             // Нельзя изменить роль владельца
             const targetRow = await global.db.get(
-                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                'SELECT role FROM channel_subscribers WHERE channelId=$1 AND phone=$2',
                 [channelId, targetPhone]
             );
             if (!targetRow) return socket.emit('channel:error', 'Пользователь не является подписчиком');
             if (targetRow.role === 'owner') return socket.emit('channel:error', 'Нельзя изменить роль владельца');
 
-            const newRole = role === 'admin' ? 'admin' : 'subscriber';
+            const newRole = role === 'admin' $1 'admin' : 'subscriber';
             await global.db.run(
-                'UPDATE channel_subscribers SET role=? WHERE channelId=? AND phone=?',
+                'UPDATE channel_subscribers SET role=$1 WHERE channelId=$2 AND phone=$3',
                 [newRole, channelId, targetPhone]
             );
             // Уведомляем назначенного пользователя
-            const chInfo = await global.db.get('SELECT name FROM channels WHERE id=?', [channelId]);
+            const chInfo = await global.db.get('SELECT name FROM channels WHERE id=$1', [channelId]);
             const sid = socketsByPhone[targetPhone];
             if (sid) io.to(sid).emit('channel:role:changed', {
                 channelId,
@@ -2093,18 +2093,18 @@ io.on('connection', socket => {
         if (!socket.phone) return;
         try {
             const myRow = await global.db.get(
-                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                'SELECT role FROM channel_subscribers WHERE channelId=$1 AND phone=$2',
                 [channelId, socket.phone]
             );
             if (!myRow || !['owner','admin'].includes(myRow.role))
                 return socket.emit('channel:error', 'Нет прав');
             const targetRow = await global.db.get(
-                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                'SELECT role FROM channel_subscribers WHERE channelId=$1 AND phone=$2',
                 [channelId, targetPhone]
             );
             if (targetRow?.role === 'owner') return socket.emit('channel:error', 'Нельзя исключить владельца');
-            await global.db.run('DELETE FROM channel_subscribers WHERE channelId=? AND phone=?', [channelId, targetPhone]);
-            await global.db.run('UPDATE channels SET subscriberCount=MAX(0,subscriberCount-1) WHERE id=?', [channelId]);
+            await global.db.run('DELETE FROM channel_subscribers WHERE channelId=$1 AND phone=$2', [channelId, targetPhone]);
+            await global.db.run('UPDATE channels SET subscriberCount=MAX(0,subscriberCount-1) WHERE id=$1', [channelId]);
             // Уведомляем исключённого
             const sid = socketsByPhone[targetPhone];
             if (sid) io.to(sid).emit('channel:kicked', { channelId });
@@ -2117,16 +2117,16 @@ io.on('connection', socket => {
         if (!socket.phone) return;
         try {
             const myRow = await global.db.get(
-                'SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?',
+                'SELECT role FROM channel_subscribers WHERE channelId=$1 AND phone=$2',
                 [channelId, socket.phone]
             );
             if (!myRow || !['owner','admin'].includes(myRow.role))
                 return socket.emit('channel:error', 'Нет прав');
-            let ch = await global.db.get('SELECT id,name,isPublic,inviteToken FROM channels WHERE id=?', [channelId]);
+            let ch = await global.db.get('SELECT id,name,isPublic,inviteToken FROM channels WHERE id=$1', [channelId]);
             if (!ch) return socket.emit('channel:error', 'Канал не найден');
             if (!ch.inviteToken) {
                 const token = require('crypto').randomBytes(12).toString('hex');
-                await global.db.run('UPDATE channels SET inviteToken=? WHERE id=?', [token, channelId]);
+                await global.db.run('UPDATE channels SET inviteToken=$1 WHERE id=$2', [token, channelId]);
                 ch.inviteToken = token;
             }
             socket.emit('channel:invite:link', { channelId, token: ch.inviteToken });
@@ -2137,15 +2137,15 @@ io.on('connection', socket => {
     socket.on('channel:invite:join', async ({ token }) => {
         if (!socket.phone || !token) return;
         try {
-            const ch = await global.db.get('SELECT * FROM channels WHERE inviteToken=?', [token]);
+            const ch = await global.db.get('SELECT * FROM channels WHERE inviteToken=$1', [token]);
             if (!ch) return socket.emit('channel:error', 'Ссылка недействительна');
-            const existing = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=? AND phone=?', [ch.id, socket.phone]);
+            const existing = await global.db.get('SELECT 1 FROM channel_subscribers WHERE channelId=$1 AND phone=$2', [ch.id, socket.phone]);
             if (!existing) {
-                await global.db.run('INSERT OR IGNORE INTO channel_subscribers (channelId,phone,role) VALUES (?,?,?)', [ch.id, socket.phone, 'subscriber']);
-                await global.db.run('UPDATE channels SET subscriberCount=subscriberCount+1 WHERE id=?', [ch.id]);
+                await global.db.run('INSERT OR IGNORE INTO channel_subscribers (channelId,phone,role) VALUES ($1,$2,$3)', [ch.id, socket.phone, 'subscriber']);
+                await global.db.run('UPDATE channels SET subscriberCount=subscriberCount+1 WHERE id=$1', [ch.id]);
             }
-            const sub = await global.db.get('SELECT role FROM channel_subscribers WHERE channelId=? AND phone=?', [ch.id, socket.phone]);
-            const subCount = await global.db.get('SELECT COUNT(*) as c FROM channel_subscribers WHERE channelId=?', [ch.id]);
+            const sub = await global.db.get('SELECT role FROM channel_subscribers WHERE channelId=$1 AND phone=$2', [ch.id, socket.phone]);
+            const subCount = await global.db.get('SELECT COUNT(*) as c FROM channel_subscribers WHERE channelId=$1', [ch.id]);
             socket.emit('channel:invite:joined', { ...ch, myRole: sub.role, subscriberCount: subCount.c });
         } catch (e) { console.error('channel:invite:join', e); }
     });
@@ -2187,7 +2187,7 @@ io.on('connection', socket => {
         if (!socket.phone) return;
         try {
             await global.db.run(
-                'UPDATE channel_subscribers SET notifications=? WHERE channelId=? AND phone=?',
+                'UPDATE channel_subscribers SET notifications=$1 WHERE channelId=$2 AND phone=$3',
                 [enabled ? 1 : 0, channelId, socket.phone]
             );
             socket.emit('channel:notifications:updated', { channelId, enabled: !!enabled });
@@ -2200,7 +2200,7 @@ io.on('connection', socket => {
     socket.on('channel:notifications:get', async ({ channelId }) => {
         if (!socket.phone) return;
         const row = await global.db.get(
-            'SELECT notifications FROM channel_subscribers WHERE channelId=? AND phone=?',
+            'SELECT notifications FROM channel_subscribers WHERE channelId=$1 AND phone=$2',
             [channelId, socket.phone]
         );
         socket.emit('channel:notifications:state', { channelId, enabled: row ? !!row.notifications : true });
@@ -2234,7 +2234,7 @@ io.on('connection', socket => {
                 videoUrl = '/videos/' + fname;
             }
             if (imageData?.startsWith('data:')) {
-                const ext = imageData.includes('png') ? 'png' : 'jpg';
+                const ext = imageData.includes('png') $1 'png' : 'jpg';
                 const fname = 'story-' + uid() + '.' + ext;
                 await fs.writeFile(path.join(UPLOADS_DIR, fname), Buffer.from(imageData.split(',')[1], 'base64'));
                 imageUrl = '/uploads/' + fname;
@@ -2243,7 +2243,7 @@ io.on('connection', socket => {
             const id = 'st_' + uid();
             const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
             const story = { id, authorPhone: socket.phone, authorName: socket.nickname, videoUrl, imageUrl, text: text || null, duration: duration || 15, expiresAt, createdAt: ts(), viewCount: 0, viewed: 0 };
-            await global.db.run('INSERT INTO stories (id,authorPhone,authorName,videoUrl,imageUrl,text,duration,expiresAt) VALUES (?,?,?,?,?,?,?,?)',
+            await global.db.run('INSERT INTO stories (id,authorPhone,authorName,videoUrl,imageUrl,text,duration,expiresAt) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
                 [id, socket.phone, socket.nickname, videoUrl, imageUrl, text || null, duration || 15, expiresAt]);
             io.emit('story:new', story);
         } catch (e) { socket.emit('story:error', 'Ошибка загрузки'); }
@@ -2251,9 +2251,9 @@ io.on('connection', socket => {
 
     socket.on('story:view', async ({ storyId }) => {
         if (!socket.phone) return;
-        await global.db.run('INSERT OR IGNORE INTO story_views (storyId,viewerPhone) VALUES (?,?)', [storyId, socket.phone]);
-        const v = await global.db.get('SELECT COUNT(*) as c FROM story_views WHERE storyId=?', [storyId]);
-        const story = await global.db.get('SELECT authorPhone FROM stories WHERE id=?', [storyId]);
+        await global.db.run('INSERT OR IGNORE INTO story_views (storyId,viewerPhone) VALUES ($1,$2)', [storyId, socket.phone]);
+        const v = await global.db.get('SELECT COUNT(*) as c FROM story_views WHERE storyId=$1', [storyId]);
+        const story = await global.db.get('SELECT authorPhone FROM stories WHERE id=$1', [storyId]);
         if (story) {
             const sid = socketsByPhone[story.authorPhone];
             if (sid) io.to(sid).emit('story:viewed', { storyId, viewCount: v.c, viewerPhone: socket.phone });
@@ -2267,7 +2267,7 @@ io.on('connection', socket => {
         if (!socket.phone || !query?.trim()) return;
         const q = '%' + query.trim() + '%';
         const users = await global.db.all(
-            'SELECT phone,nickname,avatar,status FROM users WHERE (phone LIKE ? OR nickname LIKE ?) AND phone!=? LIMIT 10', [q, q, socket.phone]
+            'SELECT phone,nickname,avatar,status FROM users WHERE (phone LIKE $1 OR nickname LIKE $2) AND phone!=$3 LIMIT 10', [q, q, socket.phone]
         );
         const channels = await global.db.all(
             `SELECT c.*,(SELECT COUNT(*) FROM channel_subscribers WHERE channelId=c.id) as subscriberCount
@@ -2305,7 +2305,7 @@ io.on('connection', socket => {
     socket.on('autoreply:set', async ({ enabled, text }) => {
         if (!socket.phone) return;
         await global.db.run(
-            'UPDATE users SET autoReply=?,autoReplyText=? WHERE phone=?',
+            'UPDATE users SET autoReply=$1,autoReplyText=$2 WHERE phone=$3',
             [enabled ? 1 : 0,
              (text || '').trim().slice(0, 200) || '🤖 Сейчас не в сети. Отвечу позже!',
              socket.phone]
@@ -2316,9 +2316,9 @@ io.on('connection', socket => {
     socket.on('autoreply:get', async () => {
         if (!socket.phone) return;
         const u = await global.db.get(
-            'SELECT autoReply,autoReplyText FROM users WHERE phone=?', [socket.phone]
+            'SELECT autoReply,autoReplyText FROM users WHERE phone=$1', [socket.phone]
         ).catch(()=>null);
-        socket.emit('autoreply:data', { enabled: !!u?.autoReply, text: u?.autoReplyText || '' });
+        socket.emit('autoreply:data', { enabled: !!u$1.autoReply, text: u$2.autoReplyText || '' });
     });
 
     // ══════════════════════════════════════════════════════════════════════
@@ -2327,11 +2327,11 @@ io.on('connection', socket => {
     socket.on('message:read:group', async ({ chatId, messageId }) => {
         if (!socket.phone || !chatId || !messageId) return;
         await global.db.run(
-            'INSERT OR IGNORE INTO message_reads (messageId,chatId,readerPhone,readAt) VALUES (?,?,?,?)',
+            'INSERT OR IGNORE INTO message_reads (messageId,chatId,readerPhone,readAt) VALUES ($1,$2,$3,$4)',
             [messageId, chatId, socket.phone, ts()]
         ).catch(()=>{});
         const readers = await global.db.all(
-            'SELECT readerPhone FROM message_reads WHERE messageId=?', [messageId]
+            'SELECT readerPhone FROM message_reads WHERE messageId=$1', [messageId]
         ).catch(()=>[]);
         await emitToChat(chatId, 'message:read:group:update', {
             messageId, chatId, readers: readers.map(r => r.readerPhone)
@@ -2352,9 +2352,9 @@ io.on('connection', socket => {
     // ══════════════════════════════════════════════════════════════════════
     socket.on('кошелёк:баланс', async () => {
         if (!socket.phone) return;
-        const user = await global.db.get('SELECT balance FROM users WHERE phone=?', [socket.phone]);
+        const user = await global.db.get('SELECT balance FROM users WHERE phone=$1', [socket.phone]);
         const txns = await global.db.all(
-            'SELECT * FROM transactions WHERE fromPhone=? OR toPhone=? ORDER BY timestamp DESC LIMIT 50',
+            'SELECT * FROM transactions WHERE fromPhone=$1 OR toPhone=$2 ORDER BY timestamp DESC LIMIT 50',
             [socket.phone, socket.phone]
         );
         socket.emit('кошелёк:данные', { balance: user?.balance || 0, transactions: txns, hasPin: !!(user?.pin) });
@@ -2364,7 +2364,7 @@ io.on('connection', socket => {
         if (!socket.phone) return;
         if (!pin || !/^\d{4}$/.test(String(pin))) return socket.emit('кошелёк:ошибка', 'ПИН — ровно 4 цифры');
         const hashed = await bcrypt.hash(String(pin), 10);
-        await global.db.run('UPDATE users SET pin=? WHERE phone=?', [hashed, socket.phone]);
+        await global.db.run('UPDATE users SET pin=$1 WHERE phone=$2', [hashed, socket.phone]);
         socket.emit('кошелёк:пин-установлен');
     });
 
@@ -2374,7 +2374,7 @@ io.on('connection', socket => {
         if (!pin || !/^\d{4}$/.test(String(pin))) {
             return socket.emit('кошелёк:пин-неверный');
         }
-        const user = await global.db.get('SELECT pin FROM users WHERE phone=?', [socket.phone]);
+        const user = await global.db.get('SELECT pin FROM users WHERE phone=$1', [socket.phone]);
         if (!user?.pin) {
             // PIN не установлен — пропускаем
             return socket.emit('кошелёк:пин-верный');
@@ -2390,28 +2390,28 @@ io.on('connection', socket => {
             if (!amt || amt <= 0 || amt > 1_000_000) return socket.emit('кошелёк:ошибка', 'Неверная сумма');
             if (!toPhone || toPhone === socket.phone) return socket.emit('кошелёк:ошибка', 'Неверный получатель');
 
-            const sender = await global.db.get('SELECT balance,pin,nickname FROM users WHERE phone=?', [socket.phone]);
+            const sender = await global.db.get('SELECT balance,pin,nickname FROM users WHERE phone=$1', [socket.phone]);
             if (!sender) return socket.emit('кошелёк:ошибка', 'Пользователь не найден');
             if (!sender.pin) return socket.emit('кошелёк:ошибка', 'Сначала установите ПИН-код');
             if (!pin) return socket.emit('кошелёк:пин-требуется', { toPhone, amount: amt, comment });
             if (!await bcrypt.compare(String(pin), sender.pin)) return socket.emit('кошелёк:ошибка', 'Неверный ПИН-код');
             if ((sender.balance || 0) < amt) return socket.emit('кошелёк:ошибка', 'Недостаточно средств');
 
-            const recipient = await global.db.get('SELECT balance,nickname FROM users WHERE phone=?', [toPhone]);
+            const recipient = await global.db.get('SELECT balance,nickname FROM users WHERE phone=$1', [toPhone]);
             if (!recipient) return socket.emit('кошелёк:ошибка', 'Получатель не найден');
 
             const txId = 'tx_' + uid(), txTs = ts();
             await global.db.transaction(async tx => {
-                await tx.run('UPDATE users SET balance=balance-? WHERE phone=?', [amt, socket.phone]);
-                await tx.run('UPDATE users SET balance=balance+? WHERE phone=?', [amt, toPhone]);
+                await tx.run('UPDATE users SET balance=balance-$1 WHERE phone=$2', [amt, socket.phone]);
+                await tx.run('UPDATE users SET balance=balance+$1 WHERE phone=$2', [amt, toPhone]);
                 await tx.run(
-                    'INSERT INTO transactions (id,fromPhone,toPhone,amount,comment,type,status,timestamp) VALUES (?,?,?,?,?,?,?,?)',
+                    'INSERT INTO transactions (id,fromPhone,toPhone,amount,comment,type,status,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
                     [txId, socket.phone, toPhone, amt, comment || '', 'transfer', 'completed', txTs]
                 );
             });
 
-            const nbS = (await global.db.get('SELECT balance FROM users WHERE phone=?', [socket.phone]))?.balance || 0;
-            const nbR = (await global.db.get('SELECT balance FROM users WHERE phone=?', [toPhone]))?.balance || 0;
+            const nbS = (await global.db.get('SELECT balance FROM users WHERE phone=$1', [socket.phone]))?.balance || 0;
+            const nbR = (await global.db.get('SELECT balance FROM users WHERE phone=$1', [toPhone]))?.balance || 0;
 
             socket.emit('кошелёк:перевод-выполнен', { txId, amount: amt, toPhone, toName: recipient.nickname, newBalance: nbS, timestamp: txTs });
             const rs = socketsByPhone[toPhone];
@@ -2419,9 +2419,9 @@ io.on('connection', socket => {
 
             // Системное сообщение
             const chatId = [socket.phone, toPhone].sort().join('_');
-            const sysText = `💸 ${sender.nickname} → ${recipient.nickname}: ${amt.toLocaleString('ru')} ₽${comment ? ' · ' + comment : ''}`;
+            const sysText = `💸 ${sender.nickname} → ${recipient.nickname}: ${amt.toLocaleString('ru')} ₽${comment $1 ' · ' + comment : ''}`;
             const sysId = uid();
-            await global.db.run('INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp) VALUES (?,?,?,?,?,?)',
+            await global.db.run('INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp) VALUES ($1,$2,$3,$4,$5,$6)',
                 [sysId, chatId, 'system', 'БАЗА Кошелёк', sysText, txTs]);
             await emitToChat(chatId, 'message:receive', { chatId, message: { id: sysId, chatId, senderPhone: 'system', senderName: 'БАЗА Кошелёк', text: sysText, timestamp: txTs, reactions: [], isRead: 0, isEdited: 0, replyTo: null } });
 
@@ -2440,7 +2440,7 @@ io.on('connection', socket => {
     socket.on('кошелёк:проверить-пин', async ({ pin }, callback) => {
         if (!socket.phone) return;
         try {
-            const user = await global.db.get('SELECT pin FROM users WHERE phone=?', [socket.phone]);
+            const user = await global.db.get('SELECT pin FROM users WHERE phone=$1', [socket.phone]);
             if (!user?.pin) {
                 if (callback) callback({ ok: false, error: 'PIN не установлен' });
                 return;
@@ -2457,10 +2457,10 @@ io.on('connection', socket => {
         if (!socket.phone) return;
         const amt = parseFloat(amount);
         if (!amt || amt <= 0 || amt > 50000) return socket.emit('кошелёк:ошибка', 'Сумма: 1–50 000 ₽');
-        await global.db.run('UPDATE users SET balance=balance+? WHERE phone=?', [amt, socket.phone]);
-        await global.db.run('INSERT INTO transactions (id,fromPhone,toPhone,amount,comment,type,status,timestamp) VALUES (?,?,?,?,?,?,?,?)',
+        await global.db.run('UPDATE users SET balance=balance+$1 WHERE phone=$2', [amt, socket.phone]);
+        await global.db.run('INSERT INTO transactions (id,fromPhone,toPhone,amount,comment,type,status,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
             ['tx_' + uid(), 'system', socket.phone, amt, 'Пополнение (демо)', 'topup', 'completed', ts()]);
-        const u = await global.db.get('SELECT balance FROM users WHERE phone=?', [socket.phone]);
+        const u = await global.db.get('SELECT balance FROM users WHERE phone=$1', [socket.phone]);
         socket.emit('кошелёк:пополнено', { amount: amt, newBalance: u.balance });
 
         await auditLog({
@@ -2489,7 +2489,7 @@ io.on('connection', socket => {
         if (!socket.phone) return;
         try {
             const plan = PREMIUM_PLANS.find(p => p.id === planId) || PREMIUM_PLANS[0];
-            const sender = await global.db.get('SELECT balance,pin,nickname,isPremium,premiumUntil FROM users WHERE phone=?', [socket.phone]);
+            const sender = await global.db.get('SELECT balance,pin,nickname,isPremium,premiumUntil FROM users WHERE phone=$1', [socket.phone]);
             if (!sender) return socket.emit('premium:error', 'Пользователь не найден');
             if (!sender.pin) return socket.emit('premium:error', 'Сначала установите ПИН-код кошелька');
             if (!pin) return socket.emit('premium:pin_required', { planId: plan.id, price: plan.price });
@@ -2503,10 +2503,10 @@ io.on('connection', socket => {
 
             const orderTs = ts();
             await global.db.transaction(async tx => {
-                await tx.run('UPDATE users SET balance=balance-? WHERE phone=?', [plan.price, socket.phone]);
-                await tx.run('UPDATE users SET isPremium=1, premiumUntil=? WHERE phone=?', [newExp, socket.phone]);
+                await tx.run('UPDATE users SET balance=balance-$1 WHERE phone=$2', [plan.price, socket.phone]);
+                await tx.run('UPDATE users SET isPremium=1, premiumUntil=$1 WHERE phone=$2', [newExp, socket.phone]);
                 await tx.run(
-                    'INSERT INTO transactions (id,fromPhone,toPhone,amount,comment,type,status,timestamp) VALUES (?,?,?,?,?,?,?,?)',
+                    'INSERT INTO transactions (id,fromPhone,toPhone,amount,comment,type,status,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
                     ['tx_' + uid(), socket.phone, 'system', plan.price, `Premium: ${plan.title}`, 'subscription', 'completed', orderTs]
                 );
             });
@@ -2543,7 +2543,7 @@ io.on('connection', socket => {
 
     socket.on('маркет:услуги', async () => {
         if (!socket.phone) return;
-        const user = await global.db.get('SELECT balance FROM users WHERE phone=?', [socket.phone]);
+        const user = await global.db.get('SELECT balance FROM users WHERE phone=$1', [socket.phone]);
         const userSvcs = await global.db.all('SELECT * FROM user_services WHERE isActive=1 ORDER BY createdAt DESC LIMIT 50');
         socket.emit('маркет:список', { balance: user?.balance || 0, services: SYSTEM_SERVICES, userServices: userSvcs });
     });
@@ -2553,7 +2553,7 @@ io.on('connection', socket => {
         try {
             const amt = parseFloat(amount);
             if (!amt || amt <= 0) return socket.emit('маркет:ошибка', 'Неверная сумма');
-            const sender = await global.db.get('SELECT balance,pin,nickname FROM users WHERE phone=?', [socket.phone]);
+            const sender = await global.db.get('SELECT balance,pin,nickname FROM users WHERE phone=$1', [socket.phone]);
             if (!sender?.pin) return socket.emit('маркет:ошибка', 'Сначала установите ПИН-код');
             if (!pin) return socket.emit('маркет:пин-требуется', { serviceId, serviceName, amount: amt, details, ownerPhone });
             if (!await bcrypt.compare(String(pin), sender.pin)) return socket.emit('маркет:ошибка', 'Неверный ПИН-код');
@@ -2561,29 +2561,29 @@ io.on('connection', socket => {
 
             const orderId = 'ord_' + uid(), orderTs = ts();
             await global.db.transaction(async tx => {
-                await tx.run('UPDATE users SET balance=balance-? WHERE phone=?', [amt, socket.phone]);
+                await tx.run('UPDATE users SET balance=balance-$1 WHERE phone=$2', [amt, socket.phone]);
                 if (ownerPhone && ownerPhone !== socket.phone) {
-                    await tx.run('UPDATE users SET balance=balance+? WHERE phone=?', [amt, ownerPhone]);
+                    await tx.run('UPDATE users SET balance=balance+$1 WHERE phone=$2', [amt, ownerPhone]);
                 }
                 await tx.run(
-                    'INSERT INTO marketplace_orders (id,userPhone,serviceId,serviceName,amount,status,details,timestamp) VALUES (?,?,?,?,?,?,?,?)',
+                    'INSERT INTO marketplace_orders (id,userPhone,serviceId,serviceName,amount,status,details,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
                     [orderId, socket.phone, serviceId, serviceName, amt, 'confirmed', JSON.stringify(details || {}), orderTs]
                 );
-                await tx.run('INSERT INTO transactions (id,fromPhone,toPhone,amount,comment,type,status,timestamp) VALUES (?,?,?,?,?,?,?,?)',
+                await tx.run('INSERT INTO transactions (id,fromPhone,toPhone,amount,comment,type,status,timestamp) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
                     ['tx_' + uid(), socket.phone, ownerPhone || 'marketplace', amt, `Услуга: ${serviceName}`, 'payment', 'completed', orderTs]);
             });
             if (ownerPhone && ownerPhone !== socket.phone) {
                 const rs = socketsByPhone[ownerPhone];
                 if (rs) io.to(rs).emit('кошелёк:получен-перевод', { amount: amt, fromPhone: socket.phone, fromName: sender.nickname, comment: `Заказ: ${serviceName}`, timestamp: orderTs });
             }
-            const nb = (await global.db.get('SELECT balance FROM users WHERE phone=?', [socket.phone]))?.balance || 0;
+            const nb = (await global.db.get('SELECT balance FROM users WHERE phone=$1', [socket.phone]))?.balance || 0;
             socket.emit('маркет:заказ-принят', { orderId, serviceId, serviceName, amount: amt, newBalance: nb, timestamp: orderTs });
         } catch (e) { console.error('маркет:заказать:', e.message); socket.emit('маркет:ошибка', 'Ошибка заказа: ' + e.message); }
     });
 
     socket.on('маркет:заказы', async () => {
         if (!socket.phone) return;
-        const orders = await global.db.all('SELECT * FROM marketplace_orders WHERE userPhone=? ORDER BY timestamp DESC LIMIT 30', [socket.phone]);
+        const orders = await global.db.all('SELECT * FROM marketplace_orders WHERE userPhone=$1 ORDER BY timestamp DESC LIMIT 30', [socket.phone]);
         socket.emit('маркет:список-заказов', orders);
     });
 
@@ -2594,32 +2594,32 @@ io.on('connection', socket => {
         if (!p || p <= 0) return socket.emit('маркет:ошибка', 'Укажите цену');
         const id = 'svc_' + uid();
         await global.db.run(
-            'INSERT INTO user_services (id,ownerPhone,ownerName,name,description,icon,category,price,isActive,createdAt) VALUES (?,?,?,?,?,?,?,?,1,?)',
+            'INSERT INTO user_services (id,ownerPhone,ownerName,name,description,icon,category,price,isActive,createdAt) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,$9)',
             [id, socket.phone, socket.nickname, name.trim(), description || '', icon || '🔧', category || 'услуги', p, ts()]
         );
-        const svc = await global.db.get('SELECT * FROM user_services WHERE id=?', [id]);
+        const svc = await global.db.get('SELECT * FROM user_services WHERE id=$1', [id]);
         socket.emit('маркет:услуга-добавлена', svc);
     });
 
     socket.on('маркет:мои-услуги', async () => {
         if (!socket.phone) return;
-        const svcs = await global.db.all('SELECT * FROM user_services WHERE ownerPhone=? ORDER BY createdAt DESC', [socket.phone]);
+        const svcs = await global.db.all('SELECT * FROM user_services WHERE ownerPhone=$1 ORDER BY createdAt DESC', [socket.phone]);
         socket.emit('маркет:список-моих-услуг', svcs);
     });
 
     socket.on('маркет:удалить-услугу', async ({ id }) => {
         if (!socket.phone) return;
-        const svc = await global.db.get('SELECT ownerPhone FROM user_services WHERE id=?', [id]);
+        const svc = await global.db.get('SELECT ownerPhone FROM user_services WHERE id=$1', [id]);
         if (!svc || svc.ownerPhone !== socket.phone) return socket.emit('маркет:ошибка', 'Нет прав');
-        await global.db.run('UPDATE user_services SET isActive=0 WHERE id=?', [id]);
+        await global.db.run('UPDATE user_services SET isActive=0 WHERE id=$1', [id]);
         socket.emit('маркет:услуга-удалена', { id });
     });
 
     socket.on('маркет:переключить-услугу', async ({ id, isActive }) => {
         if (!socket.phone) return;
-        const svc = await global.db.get('SELECT ownerPhone FROM user_services WHERE id=?', [id]);
+        const svc = await global.db.get('SELECT ownerPhone FROM user_services WHERE id=$1', [id]);
         if (!svc || svc.ownerPhone !== socket.phone) return;
-        await global.db.run('UPDATE user_services SET isActive=? WHERE id=?', [isActive ? 1 : 0, id]);
+        await global.db.run('UPDATE user_services SET isActive=$1 WHERE id=$2', [isActive ? 1 : 0, id]);
         socket.emit('маркет:услуга-обновлена', { id, isActive });
     });
 
@@ -2632,7 +2632,7 @@ io.on('connection', socket => {
     socket.on('disconnect', async () => {
         if (!socket.phone) return;
         delete socketsByPhone[socket.phone];
-        await global.db.run('UPDATE users SET status=?,lastSeen=? WHERE phone=?', ['offline', ts(), socket.phone]).catch(() => {});
+        await global.db.run('UPDATE users SET status=$1,lastSeen=$2 WHERE phone=$3', ['offline', ts(), socket.phone]).catch(() => {});
         io.emit('user:status', { phone: socket.phone, status: 'offline', lastSeen: ts() });
 
         for (const [id, c] of Object.entries(activeCall)) {
@@ -2714,7 +2714,7 @@ setTimeout(() => ensureBotTables().catch(e => console.error('bot tables error:',
 
 // GET /api/bot/:token/getMe — информация о боте
 app.get('/api/bot/:token/getMe', async (req, res) => {
-    const bot = await global.db.get('SELECT * FROM bots WHERE token=? AND isActive=1', [req.params.token]);
+    const bot = await global.db.get('SELECT * FROM bots WHERE token=$1 AND isActive=1', [req.params.token]);
     if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
     res.json({ ok: true, result: {
         id: bot.id, name: bot.name, username: bot.username,
@@ -2724,7 +2724,7 @@ app.get('/api/bot/:token/getMe', async (req, res) => {
 
 // POST /api/bot/:token/sendMessage — бот отправляет сообщение
 app.post('/api/bot/:token/sendMessage', async (req, res) => {
-    const bot = await global.db.get('SELECT * FROM bots WHERE token=? AND isActive=1', [req.params.token]);
+    const bot = await global.db.get('SELECT * FROM bots WHERE token=$1 AND isActive=1', [req.params.token]);
     if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
 
     const { chat_id, text, reply_to_message_id } = req.body;
@@ -2734,7 +2734,7 @@ app.post('/api/bot/:token/sendMessage', async (req, res) => {
     const now   = ts();
 
     await global.db.run(
-        'INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp,replyTo) VALUES (?,?,?,?,?,?,?)',
+        'INSERT INTO messages (id,chatId,senderPhone,senderName,text,timestamp,replyTo) VALUES ($1,$2,$3,$4,$5,$6,$7)',
         [msgId, chat_id, bot.id, bot.name, text, now, reply_to_message_id || null]
     );
 
@@ -2751,31 +2751,31 @@ app.post('/api/bot/:token/sendMessage', async (req, res) => {
 
 // POST /api/bot/:token/setWebhook — установить URL для уведомлений
 app.post('/api/bot/:token/setWebhook', async (req, res) => {
-    const bot = await global.db.get('SELECT id FROM bots WHERE token=?', [req.params.token]);
+    const bot = await global.db.get('SELECT id FROM bots WHERE token=$1', [req.params.token]);
     if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
     const { url } = req.body;
-    await global.db.run('UPDATE bots SET webhookUrl=? WHERE id=?', [url || '', bot.id]);
+    await global.db.run('UPDATE bots SET webhookUrl=$1 WHERE id=$2', [url || '', bot.id]);
     res.json({ ok: true, description: url ? 'Webhook set' : 'Webhook removed' });
 });
 
 // GET /api/bot/:token/getCommands — список команд
 app.get('/api/bot/:token/getCommands', async (req, res) => {
-    const bot = await global.db.get('SELECT id FROM bots WHERE token=?', [req.params.token]);
+    const bot = await global.db.get('SELECT id FROM bots WHERE token=$1', [req.params.token]);
     if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
-    const cmds = await global.db.all('SELECT command,description FROM bot_commands WHERE botId=?', [bot.id]);
+    const cmds = await global.db.all('SELECT command,description FROM bot_commands WHERE botId=$1', [bot.id]);
     res.json({ ok: true, result: cmds });
 });
 
 // POST /api/bot/:token/setCommands — установить команды
 app.post('/api/bot/:token/setCommands', async (req, res) => {
-    const bot = await global.db.get('SELECT id FROM bots WHERE token=?', [req.params.token]);
+    const bot = await global.db.get('SELECT id FROM bots WHERE token=$1', [req.params.token]);
     if (!bot) return res.status(401).json({ ok: false, error: 'Invalid token' });
     const { commands } = req.body; // [{command, description}]
     if (!Array.isArray(commands)) return res.status(400).json({ ok: false, error: 'commands must be array' });
-    await global.db.run('DELETE FROM bot_commands WHERE botId=?', [bot.id]);
+    await global.db.run('DELETE FROM bot_commands WHERE botId=$1', [bot.id]);
     for (const cmd of commands.slice(0, 50)) {
         if (cmd.command) await global.db.run(
-            'INSERT INTO bot_commands (id,botId,command,description) VALUES (?,?,?,?)',
+            'INSERT INTO bot_commands (id,botId,command,description) VALUES ($1,$2,$3,$4)',
             [uid(), bot.id, cmd.command.replace(/^\//, ''), cmd.description || '']
         );
     }
@@ -2799,7 +2799,7 @@ app.post('/api/miniapp/create', async (req, res) => {
         }
         
         // Проверяем существование бота
-        const bot = await global.db.get('SELECT id FROM bots WHERE id=?', [botId]);
+        const bot = await global.db.get('SELECT id FROM bots WHERE id=$1', [botId]);
         if (!bot) {
             return res.status(404).json({ error: 'Бот не найден' });
         }
@@ -2815,7 +2815,7 @@ app.post('/api/miniapp/create', async (req, res) => {
         // Обновляем запись бота с путём к мини-приложению
         const miniAppUrl = `/miniapps/${fileName}`;
         await global.db.run(
-            'UPDATE bots SET miniAppUrl=?, miniAppTitle=? WHERE id=?',
+            'UPDATE bots SET miniAppUrl=$1, miniAppTitle=$2 WHERE id=$3',
             [miniAppUrl, name, botId]
         );
         
@@ -2865,7 +2865,7 @@ app.delete('/api/miniapp/delete/:fileName', async (req, res) => {
         
         // Очищаем ссылку у связанных ботов
         await global.db.run(
-            'UPDATE bots SET miniAppUrl=NULL, miniAppTitle=NULL WHERE miniAppUrl LIKE ?',
+            'UPDATE bots SET miniAppUrl=NULL, miniAppTitle=NULL WHERE miniAppUrl LIKE $1',
             [`%/miniapps/${fileName}`]
         );
         
@@ -2878,7 +2878,7 @@ app.delete('/api/miniapp/delete/:fileName', async (req, res) => {
 
 // GET /miniapp/:botId — открывает мини-приложение бота
 app.get('/miniapp/:botId', async (req, res) => {
-    const bot = await global.db.get('SELECT miniAppUrl,miniAppTitle,name,id FROM bots WHERE id=?', [req.params.botId]);
+    const bot = await global.db.get('SELECT miniAppUrl,miniAppTitle,name,id FROM bots WHERE id=$1', [req.params.botId]);
     if (!bot?.miniAppUrl) return res.status(404).send('Mini App не найден');
     
     // Если это внешний URL — редирект
@@ -2892,7 +2892,7 @@ app.get('/miniapp/:botId', async (req, res) => {
 
 // GET /miniapp/view/:botId — просмотр мини-приложения в iframe (обёртка)
 app.get('/miniapp/view/:botId', async (req, res) => {
-    const bot = await global.db.get('SELECT miniAppUrl,miniAppTitle,name,id FROM bots WHERE id=?', [req.params.botId]);
+    const bot = await global.db.get('SELECT miniAppUrl,miniAppTitle,name,id FROM bots WHERE id=$1', [req.params.botId]);
     if (!bot?.miniAppUrl) return res.status(404).send('Mini App не найден');
     
     const appUrl = bot.miniAppUrl.startsWith('http') ? bot.miniAppUrl : bot.miniAppUrl;
@@ -2964,14 +2964,14 @@ function attachBotHandlers(socket) {
         if (cleanUsername.length < 3)
             return socket.emit('bot:error', 'Username минимум 3 символа (a-z, 0-9, _)');
 
-        const exists = await global.db.get('SELECT 1 FROM bots WHERE username=?', [cleanUsername]);
+        const exists = await global.db.get('SELECT 1 FROM bots WHERE username=$1', [cleanUsername]);
         if (exists) return socket.emit('bot:error', 'Username уже занят');
 
         const id    = 'bot_' + uid();
         const token = crypto.randomBytes(24).toString('hex'); // 48-символьный токен
 
         await global.db.run(
-            'INSERT INTO bots (id,name,username,ownerId,token,avatarEmoji,description,createdAt) VALUES (?,?,?,?,?,?,?,?)',
+            'INSERT INTO bots (id,name,username,ownerId,token,avatarEmoji,description,createdAt) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
             [id, name.trim(), cleanUsername, socket.phone, token, avatarEmoji || '🤖', description || '', ts()]
         );
 
@@ -2986,12 +2986,12 @@ function attachBotHandlers(socket) {
     socket.on('bot:list', async () => {
         if (!socket.phone) return;
         const bots = await global.db.all(
-            'SELECT id,name,username,avatarEmoji,description,webhookUrl,miniAppUrl,miniAppTitle,isActive,createdAt FROM bots WHERE ownerId=? ORDER BY createdAt DESC',
+            'SELECT id,name,username,avatarEmoji,description,webhookUrl,miniAppUrl,miniAppTitle,isActive,createdAt FROM bots WHERE ownerId=$1 ORDER BY createdAt DESC',
             [socket.phone]
         );
         // Для каждого бота добавляем команды
         for (const bot of bots) {
-            bot.commands = await global.db.all('SELECT command,description FROM bot_commands WHERE botId=?', [bot.id]);
+            bot.commands = await global.db.all('SELECT command,description FROM bot_commands WHERE botId=$1', [bot.id]);
         }
         socket.emit('bot:list', bots);
     });
@@ -2999,7 +2999,7 @@ function attachBotHandlers(socket) {
     // Получить токен бота (только владелец)
     socket.on('bot:token', async ({ botId }) => {
         if (!socket.phone) return;
-        const bot = await global.db.get('SELECT token FROM bots WHERE id=? AND ownerId=?', [botId, socket.phone]);
+        const bot = await global.db.get('SELECT token FROM bots WHERE id=$1 AND ownerId=$2', [botId, socket.phone]);
         if (!bot) return socket.emit('bot:error', 'Бот не найден');
         socket.emit('bot:token', { botId, token: bot.token });
     });
@@ -3007,40 +3007,40 @@ function attachBotHandlers(socket) {
     // Обновить бота
     socket.on('bot:update', async ({ botId, name, avatarEmoji, description, webhookUrl, miniAppUrl, miniAppTitle }) => {
         if (!socket.phone) return;
-        const bot = await global.db.get('SELECT id FROM bots WHERE id=? AND ownerId=?', [botId, socket.phone]);
+        const bot = await global.db.get('SELECT id FROM bots WHERE id=$1 AND ownerId=$2', [botId, socket.phone]);
         if (!bot) return socket.emit('bot:error', 'Бот не найден');
         await global.db.run(
-            'UPDATE bots SET name=COALESCE(?,name), avatarEmoji=COALESCE(?,avatarEmoji), description=COALESCE(?,description), webhookUrl=COALESCE(?,webhookUrl), miniAppUrl=COALESCE(?,miniAppUrl), miniAppTitle=COALESCE(?,miniAppTitle) WHERE id=?',
+            'UPDATE bots SET name=COALESCE($1,name), avatarEmoji=COALESCE($2,avatarEmoji), description=COALESCE($3,description), webhookUrl=COALESCE($4,webhookUrl), miniAppUrl=COALESCE($5,miniAppUrl), miniAppTitle=COALESCE($6,miniAppTitle) WHERE id=$7',
             [name||null, avatarEmoji||null, description||null, webhookUrl||null, miniAppUrl||null, miniAppTitle||null, botId]
         );
-        const updated = await global.db.get('SELECT id,name,username,avatarEmoji,description,webhookUrl,miniAppUrl,miniAppTitle,isActive FROM bots WHERE id=?', [botId]);
+        const updated = await global.db.get('SELECT id,name,username,avatarEmoji,description,webhookUrl,miniAppUrl,miniAppTitle,isActive FROM bots WHERE id=$1', [botId]);
         socket.emit('bot:updated', updated);
     });
 
     // Удалить бота
     socket.on('bot:delete', async ({ botId }) => {
         if (!socket.phone) return;
-        const bot = await global.db.get('SELECT 1 FROM bots WHERE id=? AND ownerId=?', [botId, socket.phone]);
+        const bot = await global.db.get('SELECT 1 FROM bots WHERE id=$1 AND ownerId=$2', [botId, socket.phone]);
         if (!bot) return socket.emit('bot:error', 'Бот не найден');
-        await global.db.run('DELETE FROM bot_commands WHERE botId=?', [botId]);
-        await global.db.run('DELETE FROM bots WHERE id=?', [botId]);
+        await global.db.run('DELETE FROM bot_commands WHERE botId=$1', [botId]);
+        await global.db.run('DELETE FROM bots WHERE id=$1', [botId]);
         socket.emit('bot:deleted', { botId });
     });
 
     // Регенерировать токен
     socket.on('bot:regen_token', async ({ botId }) => {
         if (!socket.phone) return;
-        const bot = await global.db.get('SELECT 1 FROM bots WHERE id=? AND ownerId=?', [botId, socket.phone]);
+        const bot = await global.db.get('SELECT 1 FROM bots WHERE id=$1 AND ownerId=$2', [botId, socket.phone]);
         if (!bot) return socket.emit('bot:error', 'Бот не найден');
         const newToken = crypto.randomBytes(24).toString('hex');
-        await global.db.run('UPDATE bots SET token=? WHERE id=?', [newToken, botId]);
+        await global.db.run('UPDATE bots SET token=$1 WHERE id=$2', [newToken, botId]);
         socket.emit('bot:token', { botId, token: newToken });
     });
 
     // Добавить бота в чат (написать боту)
     socket.on('bot:open_chat', async ({ botUsername }) => {
         if (!socket.phone) return;
-        const bot = await global.db.get('SELECT id,name,avatarEmoji FROM bots WHERE username=? AND isActive=1', [botUsername.toLowerCase()]);
+        const bot = await global.db.get('SELECT id,name,avatarEmoji FROM bots WHERE username=$1 AND isActive=1', [botUsername.toLowerCase()]);
         if (!bot) return socket.emit('bot:error', 'Бот не найден: @' + botUsername);
         // Создаём или открываем личный чат с ботом
         const chatId = [socket.phone, bot.id].sort().join('_');
@@ -3071,7 +3071,7 @@ async function tryRouteToBot(chatId, senderPhone, senderName, text) {
     for (const part of parts) {
         if (part.startsWith('bot')) {
             // Проверяем есть ли такой бот
-            const b = await global.db.get('SELECT * FROM bots WHERE id LIKE ? AND isActive=1', ['%' + part + '%']);
+            const b = await global.db.get('SELECT * FROM bots WHERE id LIKE $1 AND isActive=1', ['%' + part + '%']);
             if (b) { botId = b.id; break; }
         }
     }
@@ -3079,12 +3079,12 @@ async function tryRouteToBot(chatId, senderPhone, senderName, text) {
     const fullChatParts = chatId.split('_');
     for (const p of fullChatParts) {
         const candidate = fullChatParts.slice(fullChatParts.indexOf(p)).join('_');
-        const b = await global.db.get('SELECT * FROM bots WHERE id=? AND isActive=1', [candidate]);
+        const b = await global.db.get('SELECT * FROM bots WHERE id=$1 AND isActive=1', [candidate]);
         if (b) { botId = b.id; break; }
     }
 
     if (!botId) return;
-    const bot = await global.db.get('SELECT * FROM bots WHERE id=?', [botId]);
+    const bot = await global.db.get('SELECT * FROM bots WHERE id=$1', [botId]);
     if (!bot) return;
 
     // Формируем объект обновления (как Telegram Update)
@@ -3121,5 +3121,5 @@ app.use((req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 БАЗА v1.0 Alpha → http://localhost:${PORT} [${IS_PG ? 'PostgreSQL' : 'SQLite'}] [PID:${process.pid}]`);
+    console.log(`🚀 БАЗА v1.0 Alpha → http://localhost:${PORT} [${IS_PG $1 'PostgreSQL' : 'SQLite'}] [PID:${process.pid}]`);
 });
