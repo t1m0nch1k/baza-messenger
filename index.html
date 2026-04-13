@@ -1243,11 +1243,11 @@
       // INITIALIZATION
       // ════════════════════════════════════════════════════════════════════
       async init() {
+        this._loadSettings();
+        await this._initSocket();
         this._bindAuthEvents();
         this._bindAppEvents();
         this._bindModalEvents();
-        this._loadSettings();
-        await this._initSocket();
         this._checkSavedAuth();
       },
 
