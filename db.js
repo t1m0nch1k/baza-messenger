@@ -247,7 +247,7 @@ async function initDb() {
 
     console.log(`✅ Все таблицы и индексы созданы`);
     
-    return pool;
+    return dbProxy;
 }
 
 // Обёртка для совместимости с старым API
@@ -275,4 +275,4 @@ const dbProxy = {
     all: async (sql, params) => (await pool.query(sql, params)).rows,
 };
 
-module.exports = { initDb, IS_PG, getDb: () => pool };
+module.exports = { initDb, IS_PG, getDb: () => pool, db: dbProxy };
