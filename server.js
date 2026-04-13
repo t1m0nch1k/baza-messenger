@@ -428,9 +428,9 @@ const parseMsg = m => {
     )`).catch(()=>{});
 
     const aiP = getAiProvider();
-    console.log(`🤖 AI провайдер: ${aiP $1 '✅ ' + aiP.name + ' (' + aiP.model + ')' : '❌ нет ключей MISTRAL_API_KEY / GROQ_API_KEY'}`);
-    console.log(`📧 SMTP: ${SMTP_USER $1 '✅ ' + SMTP_USER : '⚠️  не настроен'}`);
-    console.log(`🗄️  БД: ${IS_PG $1 'PostgreSQL' : 'SQLite'}`);
+    console.log(`🤖 AI провайдер: ${aiP ? '✅ ' + aiP.name + ' (' + aiP.model + ')' : '❌ нет ключей MISTRAL_API_KEY / GROQ_API_KEY'}`);
+    console.log(`📧 SMTP: ${SMTP_USER ? '✅ ' + SMTP_USER : '⚠️  не настроен'}`);
+    console.log(`🗄️  БД: ${IS_PG ? 'PostgreSQL' : 'SQLite'}`);
 })();
 
 // ── MIDDLEWARE ────────────────────────────────────────────────────────────────
