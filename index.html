@@ -1014,6 +1014,14 @@
         <button class="modal-close" id="closeAiChat"><i class="fas fa-times"></i></button>
       </div>
       <div style="flex:1;overflow-y:auto;padding:16px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+          <button class="btn btn-ghost" id="aiSummaryBtn" style="width:auto;padding:8px 12px;font-size:12px">
+            <i class="fas fa-align-left"></i> Суммаризировать чат
+          </button>
+          <button class="btn btn-ghost" id="aiRepliesBtn" style="width:auto;padding:8px 12px;font-size:12px">
+            <i class="fas fa-bolt"></i> Быстрые ответы
+          </button>
+        </div>
         <div id="aiMessages" style="display:flex;flex-direction:column;gap:10px">
           <div class="message bot">
             <div class="message-header">
@@ -1734,6 +1742,8 @@
         });
         this.$('#closeAiChat').addEventListener('click', () => this._closeModal('aiChatModal'));
         this.$('#aiSendBtn').addEventListener('click', () => this._sendAiMessage());
+        this.$('#aiSummaryBtn').addEventListener('click', () => this._aiSummarizeCurrentChat());
+        this.$('#aiRepliesBtn').addEventListener('click', () => this._aiSmartReplies());
         this.$('#aiInput').addEventListener('keypress', (e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -2130,6 +2140,49 @@
           } else {
             container.innerHTML += `<div class="message system">Ошибка: ${data.error || 'Неизвестная ошибка'}</div>`;
           }
+        } catch (e) {
+          document.getElementById(typingId)?.remove();
+          container.innerHTML += `<div class="message system">Ошибка сети</div>`;
+        }
+        container.scrollTop = container.scrollHeight;
+      },
+
+      async _aiSummarizeCurrentChat() {
+        if (!this.state.currentChat) return this._notify('Сначала откройте чат', 'warning');
+        await this._runAiUtility('/api/ai/summarize', { chatId: this.state.currentChat }, (data) => {
+          if (data.summary) return `🧾 <b>Сводка:</b><br>${this._formatMessage(data.summary)}`;
+          return `Ошибка: ${data.error || 'Не удалось сделать сводку'}`;
+        });
+      },
+
+      async _aiSmartReplies() {
+        if (!this.state.currentChat) return this._notify('Сначала откройте чат', 'warning');
+        const msgs = (this.state.messages[this.state.currentChat] || []).slice(-8).map(m => ({
+          senderName: m.senderName || m.senderPhone || 'User',
+          text: m.text || ''
+        }));
+        await this._runAiUtility('/api/ai/smart-reply', { chatId: this.state.currentChat, messages: msgs }, (data) => {
+          if (Array.isArray(data.replies) && data.replies.length) {
+            return `⚡ <b>Варианты ответа:</b><br>• ${data.replies.map(r => this._formatMessage(String(r))).join('<br>• ')}`;
+          }
+          return `Ошибка: ${data.error || 'Не удалось подобрать ответы'}`;
+        });
+      },
+
+      async _runAiUtility(endpoint, payload, formatter) {
+        const container = this.$('#aiMessages');
+        const typingId = 'typing-' + Date.now();
+        container.innerHTML += `<div class="message bot" id="${typingId}"><div class="message-text"><i class="fas fa-ellipsis"></i></div></div>`;
+        container.scrollTop = container.scrollHeight;
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: this.state.phone, ...payload })
+          });
+          const data = await response.json();
+          document.getElementById(typingId)?.remove();
+          container.innerHTML += `<div class="message bot"><div class="message-text">${formatter(data)}</div></div>`;
         } catch (e) {
           document.getElementById(typingId)?.remove();
           container.innerHTML += `<div class="message system">Ошибка сети</div>`;
