@@ -1,121 +1,144 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { FormEvent, useMemo, useState } from 'react';
+import './App.css';
 
-function App() {
-  const [count, setCount] = useState(0)
+type User = {
+  phone: string;
+  nickname?: string;
+  role: string;
+  isPremium?: boolean;
+};
 
-  return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3100';
+const REQUEST_TIMEOUT_MS = 10000;
 
-      <div className="ticks"></div>
+type Mode = 'login' | 'register';
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+async function apiRequest(path: string, init: RequestInit) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+  try {
+    const res = await fetch(`${API_URL}${path}`, { ...init, signal: controller.signal });
+    const text = await res.text();
+    const payload = text ? JSON.parse(text) : {};
+
+    if (!res.ok) {
+      const error = payload?.error || `HTTP_${res.status}`;
+      throw new Error(error);
+    }
+
+    return payload;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('REQUEST_TIMEOUT');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-export default App
+function App() {
+  const [mode, setMode] = useState<Mode>('login');
+  const [phone, setPhone] = useState('');
+  const [nickname, setNickname] = useState('');
+  const [password, setPassword] = useState('');
+  const [token, setToken] = useState('');
+  const [status, setStatus] = useState('Готово к альфа-тесту');
+  const [me, setMe] = useState<null | User>(null);
+  const [loading, setLoading] = useState(false);
+
+  const canSubmit = useMemo(() => {
+    const base = phone.trim().length >= 3 && password.trim().length >= 6;
+    return mode === 'register' ? base && nickname.trim().length >= 2 : base;
+  }, [mode, phone, password, nickname]);
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setLoading(true);
+
+    try {
+      if (mode === 'register') {
+        setStatus('Регистрация...');
+        await apiRequest('/api/v2/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ phone: phone.trim(), nickname: nickname.trim(), password }),
+        });
+        setStatus('Регистрация успешна. Теперь выполните вход.');
+        setMode('login');
+      } else {
+        setStatus('Логин...');
+        const payload = await apiRequest('/api/v2/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ phone: phone.trim(), password }),
+        });
+        setToken(payload.accessToken);
+        setMe(payload.user);
+        setStatus(`Успешно: ${payload.user.nickname || payload.user.phone}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
+      setStatus(`Ошибка: ${message}`);
+      if (mode === 'login') {
+        setToken('');
+        setMe(null);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadProfile() {
+    if (!token) return;
+    setStatus('Запрос профиля...');
+    try {
+      const payload = await apiRequest('/api/v2/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
+      });
+      setMe(payload.user);
+      setStatus('Профиль загружен');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
+      setStatus(`Ошибка профиля: ${message}`);
+    }
+  }
+
+  return (
+    <main className="page">
+      <section className="card">
+        <h1>BAZA v2 · Alpha Launch</h1>
+        <p className="muted">Панель авторизации/регистрации для альфа-теста без зависаний.</p>
+
+        <div className="tabs">
+          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Вход</button>
+          <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Регистрация</button>
+        </div>
+
+        <form onSubmit={onSubmit} className="form">
+          <label>Телефон<input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+7..." /></label>
+          {mode === 'register' && (
+            <label>Никнейм<input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="Ваш ник" /></label>
+          )}
+          <label>Пароль<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+          <button disabled={!canSubmit || loading} type="submit">{loading ? 'Подождите...' : mode === 'login' ? 'Войти' : 'Создать аккаунт'}</button>
+        </form>
+
+        <div className="actions">
+          <button onClick={loadProfile} disabled={!token} type="button">Проверить /me</button>
+        </div>
+
+        <pre className="status">{status}</pre>
+
+        {me && <div className="profile"><strong>Пользователь:</strong> {me.nickname || '—'} ({me.phone}) · {me.role}</div>}
+      </section>
+    </main>
+  );
+}
+
+export default App;

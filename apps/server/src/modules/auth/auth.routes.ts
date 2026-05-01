@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import * as bcrypt from 'bcrypt';
 import { z } from 'zod';
 import { getDb } from '../../db/sqlite';
 import { requireAuth } from '../../middleware/authz';
@@ -11,7 +12,35 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+const registerSchema = z.object({
+  phone: z.string().min(3).max(32),
+  nickname: z.string().min(2).max(32),
+  password: z.string().min(6).max(128),
+});
+
 const refreshCookieName = 'baza_rt';
+
+router.post('/register', async (req, res) => {
+  const parsed = registerSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'INVALID_PAYLOAD' });
+
+  const db = await getDb();
+  const phone = parsed.data.phone.trim();
+  const nickname = parsed.data.nickname.trim();
+
+  const existing = await db.get<{ phone: string }>('SELECT phone FROM users WHERE phone=?', [phone]);
+  if (existing) return res.status(409).json({ error: 'PHONE_ALREADY_EXISTS' });
+
+  const passwordHash = await bcrypt.hash(parsed.data.password, 12);
+
+  await db.run(
+    `INSERT INTO users (phone,nickname,passwordHash,role,isBanned,isPremium)
+     VALUES (?,?,?,?,?,?)`,
+    [phone, nickname, passwordHash, 'user', 0, 0],
+  );
+
+  res.status(201).json({ ok: true });
+});
 
 router.post('/login', async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
@@ -28,7 +57,7 @@ router.post('/login', async (req, res) => {
     res.cookie(refreshCookieName, result.refreshToken, {
       httpOnly: true,
       sameSite: 'lax',
-      secure: false,
+      secure: process.env.NODE_ENV === 'production',
       maxAge: 30 * 24 * 60 * 60 * 1000,
       path: '/api/v2/auth',
     });
@@ -89,4 +118,3 @@ router.get('/me', requireAuth, async (req, res) => {
 });
 
 export { router as authRoutes };
-

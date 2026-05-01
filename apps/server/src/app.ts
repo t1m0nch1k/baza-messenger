@@ -10,6 +10,16 @@ export function createApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
 
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', env.corsOrigin);
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
+
   app.get('/api/v2/health', (_req, res) => {
     res.json({ ok: true, service: 'baza-server-v2', ts: new Date().toISOString(), env: env.nodeEnv });
   });
