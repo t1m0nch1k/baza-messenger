@@ -113,7 +113,7 @@ function App() {
     <main className="page">
       <section className="card">
         <h1>BAZA v2 · Alpha Launch</h1>
-        <p className="muted">Панель авторизации/регистрации для альфа-теста без зависаний.</p>
+        <p className="muted">Панель авторизации/регистрации для альфа-теста без зависаний и с таймаутом запросов.</p>
 
         <div className="tabs">
           <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Вход</button>

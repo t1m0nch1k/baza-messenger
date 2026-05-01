@@ -49,4 +49,13 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 }
 .profile { margin-top: 12px; color: #86efac; }
 
-.tabs{display:flex;gap:8px;margin-top:10px}.tabs .active{border-color:#22c55e;color:#bbf7d0}
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.tabs .active {
+  border-color: #22c55e;
+  color: #bbf7d0;
+}
