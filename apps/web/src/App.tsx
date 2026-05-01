@@ -1,121 +1,117 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { FormEvent, useMemo, useState } from 'react';
+import './App.css';
+
+type AuthResponse = {
+  accessToken: string;
+  user: {
+    phone: string;
+    nickname?: string;
+    role: string;
+    isPremium?: boolean;
+  };
+};
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3100';
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [token, setToken] = useState('');
+  const [status, setStatus] = useState('Готово к альфа-тесту');
+  const [me, setMe] = useState<null | AuthResponse['user']>(null);
+  const [loading, setLoading] = useState(false);
+
+  const canSubmit = useMemo(() => phone.trim().length >= 3 && password.trim().length > 0, [phone, password]);
+
+  async function onLogin(event: FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+
+    setLoading(true);
+    setStatus('Логин...');
+
+    try {
+      const res = await fetch(`${API_URL}/api/v2/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ phone: phone.trim(), password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'LOGIN_FAILED');
+
+      const payload = data as AuthResponse;
+      setToken(payload.accessToken);
+      setMe(payload.user);
+      setStatus(`Успешно: ${payload.user.nickname || payload.user.phone}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'LOGIN_FAILED';
+      setStatus(`Ошибка: ${message}`);
+      setToken('');
+      setMe(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadProfile() {
+    if (!token) return;
+    setStatus('Запрос профиля...');
+
+    const res = await fetch(`${API_URL}/api/v2/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok) return setStatus(`Ошибка профиля: ${data.error || 'FAILED'}`);
+
+    setMe(data.user);
+    setStatus('Профиль загружен');
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+    <main className="page">
+      <section className="card">
+        <h1>BAZA v2 · Alpha Launch</h1>
+        <p className="muted">Минимальная панель для проверки API авторизации перед запуском альфа-теста.</p>
+
+        <form onSubmit={onLogin} className="form">
+          <label>
+            Телефон
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+7..." autoComplete="username" />
+          </label>
+
+          <label>
+            Пароль
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+
+          <button disabled={!canSubmit || loading} type="submit">
+            {loading ? 'Входим...' : 'Войти'}
+          </button>
+        </form>
+
+        <div className="actions">
+          <button onClick={loadProfile} disabled={!token} type="button">
+            Проверить /me
+          </button>
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
+
+        <pre className="status">{status}</pre>
+
+        {me && (
+          <div className="profile">
+            <strong>Пользователь:</strong> {me.nickname || '—'} ({me.phone}) · {me.role}
+          </div>
+        )}
       </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+    </main>
+  );
 }
 
-export default App
+export default App;

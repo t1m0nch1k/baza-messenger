@@ -1,0 +1,28 @@
+version: '3.9'
+services:
+  api:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: sh -c "cd apps/server && npm install && npm run dev"
+    env_file:
+      - .env
+    environment:
+      - PORT_V2=3100
+      - CORS_ORIGIN=http://localhost:5173
+    ports:
+      - "3100:3100"
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: sh -c "cd apps/web && npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      - VITE_API_URL=http://localhost:3100
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
