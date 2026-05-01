@@ -4,6 +4,11 @@ import { env } from './config/env';
 import { authRoutes } from './modules/auth/auth.routes';
 import { adminRoutes } from './modules/admin/admin.routes';
 
+const corsOrigins = env.corsOrigin
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
@@ -11,12 +16,29 @@ export function createApp() {
   app.use(cookieParser());
 
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', env.corsOrigin);
-    res.header('Vary', 'Origin');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    const requestOrigin = req.header('origin');
+    const allowAny = corsOrigins.includes('*');
+    const isAllowed = !requestOrigin || allowAny || corsOrigins.includes(requestOrigin);
+
+    if (isAllowed) {
+      if (requestOrigin && !allowAny) {
+        res.header('Access-Control-Allow-Origin', requestOrigin);
+      } else if (allowAny) {
+        res.header('Access-Control-Allow-Origin', '*');
+      }
+
+      res.header('Vary', 'Origin');
+      res.header('Access-Control-Allow-Credentials', 'true');
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    }
+
+    if (req.method === 'OPTIONS') {
+      return isAllowed ? res.sendStatus(204) : res.sendStatus(403);
+    }
+
+    if (!isAllowed) return res.status(403).json({ error: 'CORS_ORIGIN_FORBIDDEN' });
+
     next();
   });
 
@@ -35,4 +57,3 @@ export function createApp() {
 
   return app;
 }
-

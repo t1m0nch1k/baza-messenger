@@ -8,7 +8,7 @@ type User = {
   isPremium?: boolean;
 };
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3100';
+const API_URL = import.meta.env.VITE_API_URL || '';
 const REQUEST_TIMEOUT_MS = 10000;
 
 type Mode = 'login' | 'register';
@@ -113,7 +113,7 @@ function App() {
     <main className="page">
       <section className="card">
         <h1>BAZA v2 · Alpha Launch</h1>
-        <p className="muted">Панель авторизации/регистрации для альфа-теста без зависаний и с таймаутом запросов.</p>
+        <p className="muted">Панель авторизации/регистрации для альфа-теста. По умолчанию API берется с текущего домена.</p>
 
         <div className="tabs">
           <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Вход</button>

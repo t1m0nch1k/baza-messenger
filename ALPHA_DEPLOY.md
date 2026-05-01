@@ -16,6 +16,8 @@ docker compose -f docker-compose.alpha.yml up --build
 - API: `http://localhost:3100/api/v2/health`
 - Web: `http://localhost:5173`
 
+> Важно: в проде задайте `VITE_API_URL=https://api.your-domain.com` если API на отдельном домене. Если переменная не задана, веб-клиент будет использовать текущий домен.
+
 ## 3) Прод-режим (без Docker)
 
 ```bash
