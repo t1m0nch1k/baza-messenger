@@ -5,7 +5,10 @@
 1. Скопируйте `.env` и проверьте секреты:
    - `JWT_ACCESS_SECRET`
    - `JWT_REFRESH_SECRET`
-2. Убедитесь, что `PORT_V2` и `CORS_ORIGIN` соответствуют вашему домену.
+2. Для прода задайте домены:
+   - `CORS_ORIGIN=https://web.your-domain.com` (или список через запятую)
+   - `VITE_API_URL=https://api.your-domain.com` (если API на отдельном домене)
+3. Если API и Web под одним доменом (reverse proxy), `VITE_API_URL` можно не задавать — клиент использует текущий origin.
 
 ## 2) Локальный smoke-test через Docker
 
@@ -16,10 +19,9 @@ docker compose -f docker-compose.alpha.yml up --build
 - API: `http://localhost:3100/api/v2/health`
 - Web: `http://localhost:5173`
 
-> Важно: в проде задайте `VITE_API_URL=https://api.your-domain.com` если API на отдельном домене. Если переменная не задана, веб-клиент будет использовать текущий домен.
+## 3) Публикация обновлений
 
-## 3) Прод-режим (без Docker)
-
+### Server
 ```bash
 cd apps/server
 npm ci
@@ -27,6 +29,7 @@ npm run build
 npm start
 ```
 
+### Web
 ```bash
 cd apps/web
 npm ci
@@ -34,10 +37,10 @@ npm run build
 npm run preview -- --host 0.0.0.0 --port 5173
 ```
 
-## 4) Минимальный чеклист перед альфой
+## 4) Минимальный чеклист перед релизом
 
-- [ ] Health endpoint отвечает `ok: true`.
-- [ ] Логин работает для тестового пользователя.
-- [ ] `/api/v2/auth/me` доступен по access token.
-- [ ] CORS ограничен доменом фронта.
-- [ ] JWT секреты заменены на production-значения.
+- [ ] `GET /api/v2/health` отвечает `ok: true`.
+- [ ] Регистрация создаёт нового пользователя.
+- [ ] Вход возвращает `accessToken`.
+- [ ] `/api/v2/auth/me` отвечает при `Authorization: Bearer ...`.
+- [ ] CORS разрешает только нужные домены.

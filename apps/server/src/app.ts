@@ -1,8 +1,8 @@
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import { env } from './config/env';
-import { authRoutes } from './modules/auth/auth.routes';
 import { adminRoutes } from './modules/admin/admin.routes';
+import { authRoutes } from './modules/auth/auth.routes';
 
 const corsOrigins = env.corsOrigin
   .split(',')
@@ -37,13 +37,20 @@ export function createApp() {
       return isAllowed ? res.sendStatus(204) : res.sendStatus(403);
     }
 
-    if (!isAllowed) return res.status(403).json({ error: 'CORS_ORIGIN_FORBIDDEN' });
+    if (!isAllowed) {
+      return res.status(403).json({ error: 'CORS_ORIGIN_FORBIDDEN' });
+    }
 
-    next();
+    return next();
   });
 
   app.get('/api/v2/health', (_req, res) => {
-    res.json({ ok: true, service: 'baza-server-v2', ts: new Date().toISOString(), env: env.nodeEnv });
+    res.json({
+      ok: true,
+      service: 'baza-server-v2',
+      ts: new Date().toISOString(),
+      env: env.nodeEnv,
+    });
   });
 
   app.use('/api/v2/auth', authRoutes);

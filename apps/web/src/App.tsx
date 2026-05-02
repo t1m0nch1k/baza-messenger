@@ -44,7 +44,7 @@ function App() {
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
   const [token, setToken] = useState('');
-  const [status, setStatus] = useState('Готово к альфа-тесту');
+  const [status, setStatus] = useState('Готово к публикации обновлений');
   const [me, setMe] = useState<null | User>(null);
   const [loading, setLoading] = useState(false);
 
@@ -56,6 +56,7 @@ function App() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!canSubmit) return;
+
     setLoading(true);
 
     try {
@@ -67,16 +68,17 @@ function App() {
           credentials: 'include',
           body: JSON.stringify({ phone: phone.trim(), nickname: nickname.trim(), password }),
         });
-        setStatus('Регистрация успешна. Теперь выполните вход.');
+        setStatus('Регистрация успешна. Выполните вход.');
         setMode('login');
       } else {
-        setStatus('Логин...');
+        setStatus('Вход...');
         const payload = await apiRequest('/api/v2/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({ phone: phone.trim(), password }),
         });
+
         setToken(payload.accessToken);
         setMe(payload.user);
         setStatus(`Успешно: ${payload.user.nickname || payload.user.phone}`);
@@ -95,12 +97,15 @@ function App() {
 
   async function loadProfile() {
     if (!token) return;
+
     setStatus('Запрос профиля...');
+
     try {
       const payload = await apiRequest('/api/v2/auth/me', {
         headers: { Authorization: `Bearer ${token}` },
         credentials: 'include',
       });
+
       setMe(payload.user);
       setStatus('Профиль загружен');
     } catch (error) {
@@ -113,29 +118,55 @@ function App() {
     <main className="page">
       <section className="card">
         <h1>BAZA v2 · Alpha Launch</h1>
-        <p className="muted">Панель авторизации/регистрации для альфа-теста. По умолчанию API берется с текущего домена.</p>
+        <p className="muted">
+          Панель входа/регистрации для релиза альфы. По умолчанию API вызывается на текущем домене.
+        </p>
 
         <div className="tabs">
-          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Вход</button>
-          <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Регистрация</button>
+          <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>
+            Вход
+          </button>
+          <button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>
+            Регистрация
+          </button>
         </div>
 
         <form onSubmit={onSubmit} className="form">
-          <label>Телефон<input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+7..." /></label>
+          <label>
+            Телефон
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+7..." />
+          </label>
+
           {mode === 'register' && (
-            <label>Никнейм<input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="Ваш ник" /></label>
+            <label>
+              Никнейм
+              <input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="Ваш ник" />
+            </label>
           )}
-          <label>Пароль<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
-          <button disabled={!canSubmit || loading} type="submit">{loading ? 'Подождите...' : mode === 'login' ? 'Войти' : 'Создать аккаунт'}</button>
+
+          <label>
+            Пароль
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </label>
+
+          <button disabled={!canSubmit || loading} type="submit">
+            {loading ? 'Подождите...' : mode === 'login' ? 'Войти' : 'Создать аккаунт'}
+          </button>
         </form>
 
         <div className="actions">
-          <button onClick={loadProfile} disabled={!token} type="button">Проверить /me</button>
+          <button onClick={loadProfile} disabled={!token} type="button">
+            Проверить /me
+          </button>
         </div>
 
         <pre className="status">{status}</pre>
 
-        {me && <div className="profile"><strong>Пользователь:</strong> {me.nickname || '—'} ({me.phone}) · {me.role}</div>}
+        {me && (
+          <div className="profile">
+            <strong>Пользователь:</strong> {me.nickname || '—'} ({me.phone}) · {me.role}
+          </div>
+        )}
       </section>
     </main>
   );
